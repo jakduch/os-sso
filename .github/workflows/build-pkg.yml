@@ -169,7 +169,10 @@ jobs:
             cd plugins/$PLUGIN_CATEGORY/$PLUGIN_NAME
             # On the command line so it beats the ?= in Mk/defaults.mk, which has no
             # php here to derive a value from.
-            make package PLUGIN_PHP="${PLUGIN_PHP}"
+            # This repository distributes fork/test builds alongside the official
+            # os-sso package.  Keep the -devel identity even when building from a
+            # stable plugins tree, where devel.mk is intentionally absent.
+            make package PLUGIN_PHP="${PLUGIN_PHP}" PLUGIN_DEVEL=yes
             ls -la work/pkg/
             if [ -n "${OPNSENSE_REL}" ]; then
               echo ">>> re-creating the artifact with OPNsense's pkg (so its pkg can extract it)"
