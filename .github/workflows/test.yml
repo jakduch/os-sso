@@ -37,6 +37,11 @@ jobs:
       - name: Check PHP syntax
         run: find src test -type f -name '*.php' -print0 | xargs -0 -n1 php -l
 
+      - name: Check package script syntax
+        run: |
+          sh -n ./+POST_INSTALL.post ./+PRE_DEINSTALL.post test/package_scripts.sh
+          sh test/package_scripts.sh
+
       - name: Run unit suite without skipped state tests
         run: |
           sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /var/db/os-sso
