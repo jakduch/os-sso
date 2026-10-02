@@ -9,6 +9,11 @@ on:
         description: "Force a specific version (optional, format: YYYY.M.X)"
         required: false
         type: string
+      publish_release:
+        description: "Publish a GitHub release after a manual build"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: build-${{ github.ref }}
@@ -42,6 +47,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           FORCE_VERSION: ${{ github.event.inputs.force_version }}
+          PUBLISH_RELEASE: ${{ github.event.inputs.publish_release }}
         run: |
           set -euo pipefail
           if [ "${EVENT_NAME}" = "push" ] && [ "${REF}" != "${REF#refs/tags/}" ]; then
@@ -50,7 +56,7 @@ jobs:
             DO_RELEASE=true
           elif [ -n "${FORCE_VERSION}" ]; then
             VERSION="${FORCE_VERSION#v}"
-            DO_RELEASE=true
+            DO_RELEASE="${PUBLISH_RELEASE:-false}"
           else
             git fetch --tags --force
             YEAR_MONTH=$(date +'%Y.%-m')                                  # 2026.6
@@ -60,7 +66,7 @@ jobs:
             else
               VERSION="${YEAR_MONTH}.$(( ${LATEST_TAG##*.} + 1 ))"
             fi
-            [ "${EVENT_NAME}" = "workflow_dispatch" ] && DO_RELEASE=true || DO_RELEASE=false
+            DO_RELEASE=false
           fi
 
           # Normalise each segment (strip leading zeros): 2026.06.1 -> 2026.6.1
