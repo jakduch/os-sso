@@ -102,13 +102,17 @@ jobs:
             abi: "FreeBSD-14"
             opnsense: "25.7"
             php: "83"
+            plugins_ref: "stable/26.1"
           - freebsd: "15.1"
             abi: "FreeBSD-15"
             opnsense: ""
             php: "85"
+            plugins_ref: "stable/26.7"
     steps:
       - name: Clone the opnsense/plugins tree
-        run: git clone --depth 1 https://github.com/opnsense/plugins.git "${GITHUB_WORKSPACE}/plugins"
+        env:
+          PLUGINS_REF: ${{ matrix.plugins_ref }}
+        run: git clone --depth 1 --branch "${PLUGINS_REF}" https://github.com/opnsense/plugins.git "${GITHUB_WORKSPACE}/plugins"
 
       - name: Checkout os-sso into the plugins tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

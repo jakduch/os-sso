@@ -18,10 +18,17 @@ base from the [Releases](../../../releases) page - check it with `pkg config ABI
 
 ```sh
 pkg add os-sso-devel-*-FreeBSD-14.pkg   # pick the file matching your ABI
+/usr/local/opnsense/scripts/firmware/register.php install os-sso-devel
 ```
 
 Then reload the WebGUI (or reboot). The new server types appear under
 **System ▸ Access ▸ Servers**.
+
+The registration command is needed after a direct local `pkg add`. OPNsense normally
+runs the same step through its firmware installer; without it, the package is installed
+and functional but the firmware page labels it `misconfigured`. A locally supplied
+package continues to show `unknown-repository` (or `orphaned`) until it is served from a
+configured package repository; that label does not affect the plugin runtime.
 
 ## Firmware upgrades and removal
 
