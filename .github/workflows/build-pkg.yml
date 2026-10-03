@@ -192,8 +192,10 @@ jobs:
             fi
             BUILT=$(ls work/pkg/*.pkg | head -n 1)
             tar -xOf "$BUILT" +COMPACT_MANIFEST > /tmp/os-sso-package-manifest
+            cat /tmp/os-sso-package-manifest
             grep -Eq '"name"[[:space:]]*:[[:space:]]*"os-sso"' /tmp/os-sso-package-manifest
-            grep -Eq '"conflicts"[[:space:]]*:[^]]*"os-sso-devel"' /tmp/os-sso-package-manifest
+            grep -Eq '"product_conflicts"[[:space:]]*:[[:space:]]*"os-sso-devel"' \
+              /tmp/os-sso-package-manifest
             tar -tf "$BUILT" > /tmp/os-sso-package-contents
             grep -Eq '^/?usr/local/share/licenses/os-sso/LICENSE$' /tmp/os-sso-package-contents
             grep -Eq '^/?usr/local/share/doc/os-sso/NOTICE.md$' /tmp/os-sso-package-contents
