@@ -1,3 +1,5 @@
+#!/bin/sh
+
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -59,8 +61,8 @@ xgettext \
     --keyword=gettext \
     --keyword=lang._ \
     --package-name=os-sso \
-    --copyright-holder="Maxime Wewer" \
-    --msgid-bugs-address=https://github.com/MaximeWewer/os-sso/issues \
+    --copyright-holder="Maxime Wewer and os-sso contributors" \
+    --msgid-bugs-address=https://github.com/jakduch/os-sso/issues \
     --add-comments \
     --sort-by-file \
     --output="$STAGE/os-sso.pot"

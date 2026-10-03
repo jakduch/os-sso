@@ -25,3 +25,7 @@ Features:
     deactivates instead of removing.
 
 The local password path (+ native TOTP) stays active as break-glass.
+
+This package is built from Jakub Duchek's maintained fork of Maxime Wewer's
+original BSD-2-Clause os-sso project. It is an independent third-party plugin,
+not an official OPNsense/Deciso package.

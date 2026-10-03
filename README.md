@@ -1,5 +1,10 @@
 # os-sso - Single Sign-On (SSO) and SCIM provisioning for OPNsense
 
+> This is [Jakub Duchek's maintained fork](https://github.com/jakduch/os-sso) of
+> [Maxime Wewer's original os-sso project](https://github.com/MaximeWewer/os-sso).
+> The original author and BSD 2-Clause license are retained. This independent fork is
+> not an official OPNsense/Deciso package; see [NOTICE.md](NOTICE.md).
+
 Add **OpenID Connect**, **SAML 2.0** and **JWT forward-auth** as authentication types in
 OPNsense, for the **WebGUI**, the **Captive Portal** and **OpenVPN**. The firewall is a
 pure consumer (Relying Party / Service Provider): your users sign in at your existing
@@ -57,17 +62,23 @@ break-glass path.
 
 ## Install
 
-Needs **OPNsense 25.7 or newer**. Each release ships one package per FreeBSD ABI - check
-yours with `pkg config ABI`, download the match from the [Releases](../../releases) page,
-and install it:
+Needs **OPNsense 25.7 or newer**. The recommended installation uses this fork's signed
+package repository. It gives OPNsense a normal `pkg` update path while leaving the
+official OPNsense repositories intact:
 
 ```sh
-pkg add os-sso-devel-*-FreeBSD-14.pkg   # pick the file matching your ABI
+fetch -qo /tmp/os-sso-bootstrap.sh https://jakduch.github.io/os-sso/bootstrap.sh
+/bin/sh /tmp/os-sso-bootstrap.sh
 ```
 
-Reload the WebGUI (or reboot). The new server types appear under
-**System ▸ Access ▸ Servers**. Full requirements and a source build:
-[docs/install.md](docs/install.md).
+The bootstrap pins a 4096-bit RSA repository key before `pkg update` and installs only
+`os-sso-devel`; package metadata is published separately for `FreeBSD:14:amd64` and
+`FreeBSD:15:amd64`. Verify the key fingerprint and see the manual and HA procedure in
+[docs/install.md](docs/install.md). Release assets remain available from
+[GitHub Releases](https://github.com/jakduch/os-sso/releases) as a fallback.
+
+Reload the WebGUI (or reboot). The new server types appear under **System ▸ Access ▸
+Servers**.
 
 ## Quick start
 
@@ -110,6 +121,21 @@ three doors. The short version:
   through an explicit operator mapping.
 - The local password (+ native TOTP) stays active as break-glass: keep one local admin.
 
+Project CI runs locked-dependency advisory checks, PHP/Python syntax checks, package
+script tests, static security analysis and the unit suite. Those controls do not prove
+that software is vulnerability-free. Report suspected vulnerabilities privately as
+described in [SECURITY.md](SECURITY.md), and review the documented trust boundaries
+before using this third-party plugin on a production firewall.
+
+## What this fork changes
+
+Compared with the original upstream project, this fork maintains managed OpenVPN
+deferred web authentication with a continuously supervised fail-closed guard, HA
+configuration synchronization, package compatibility for the supported FreeBSD ABIs,
+additional protocol and state-file hardening, expanded regression tests, and signed
+repository releases. The detailed history remains available in Git and the current
+package source is always the matching release tag.
+
 ## Development
 
 Unit suite and an eight-suite end-to-end lab (Vagrant OPNsense + Authentik + Keycloak in
@@ -122,4 +148,7 @@ php test/unit/run.php    # ~590 assertions, no setup
 
 ## License
 
-BSD-2-Clause. © 2026 Maxime Wewer.
+BSD-2-Clause. Original project © 2026 Maxime Wewer; fork modifications © 2026 Jakub
+Duchek. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The binary package includes
+both notices under `/usr/local/share/licenses/os-sso-devel` and
+`/usr/local/share/doc/os-sso`.

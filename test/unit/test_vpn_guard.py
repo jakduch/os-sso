@@ -55,5 +55,57 @@ class LoadManifestTest(unittest.TestCase):
         )
 
 
+class SavedFlagsTest(unittest.TestCase):
+    """The local config parser is bounded and never accepts XML entities."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.original_config = VPN_GUARD.CONFIG_XML
+        self.original_limit = VPN_GUARD.CONFIG_XML_MAX_BYTES
+        VPN_GUARD.CONFIG_XML = Path(self.temporary.name) / "config.xml"
+
+    def tearDown(self) -> None:
+        VPN_GUARD.CONFIG_XML = self.original_config
+        VPN_GUARD.CONFIG_XML_MAX_BYTES = self.original_limit
+        self.temporary.cleanup()
+
+    def write_config(self, document: str) -> None:
+        VPN_GUARD.CONFIG_XML.write_text(document, encoding="utf-8")
+
+    def test_reads_managed_instance_flags(self) -> None:
+        self.write_config(
+            """<opnsense><OPNsense><OpenVPN><Instances>
+            <Instance uuid="12345678-1234-1234-1234-123456789abc">
+              <authmode></authmode>
+              <various_flags>auth-user-pass-optional,verb 3</various_flags>
+            </Instance>
+            </Instances></OpenVPN></OPNsense></opnsense>"""
+        )
+        self.assertEqual(
+            {
+                "12345678-1234-1234-1234-123456789abc": (
+                    ["auth-user-pass-optional", "verb 3"],
+                    "",
+                )
+            },
+            VPN_GUARD.saved_flags(),
+        )
+
+    @mock.patch.object(VPN_GUARD, "log")
+    def test_rejects_dtd_and_entity_declarations(self, log: mock.Mock) -> None:
+        self.write_config(
+            "<!DOCTYPE opnsense [<!ENTITY x 'expanded'>]><opnsense>&x;</opnsense>"
+        )
+        self.assertIsNone(VPN_GUARD.saved_flags())
+        self.assertIn("DTD and entity declarations", log.call_args.args[0])
+
+    @mock.patch.object(VPN_GUARD, "log")
+    def test_rejects_oversized_config_before_parsing(self, log: mock.Mock) -> None:
+        VPN_GUARD.CONFIG_XML_MAX_BYTES = 32
+        self.write_config("<opnsense>" + ("x" * 64) + "</opnsense>")
+        self.assertIsNone(VPN_GUARD.saved_flags())
+        self.assertIn("document exceeds 32 bytes", log.call_args.args[0])
+
+
 if __name__ == "__main__":
     unittest.main()
