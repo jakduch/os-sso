@@ -191,6 +191,14 @@ jobs:
               cp /tmp/rb/out/*.pkg work/pkg/
               echo ">>> repackaged with $("$OLDPKG" -v):"; ls -la work/pkg/
             fi
+            BUILT=$(ls work/pkg/*.pkg | head -n 1)
+            tar -tf "$BUILT" > /tmp/os-sso-package-contents
+            grep -Eq '^/?usr/local/share/licenses/os-sso-devel/LICENSE$' /tmp/os-sso-package-contents
+            grep -Eq '^/?usr/local/share/doc/os-sso/NOTICE.md$' /tmp/os-sso-package-contents
+            if grep -Eq '^/?usr/local/usr/local/' /tmp/os-sso-package-contents; then
+              echo ">>> invalid duplicated /usr/local prefix in package" >&2
+              exit 1
+            fi
 
       - name: Tag the .pkg filename with its ABI
         # Both matrix legs emit the same os-sso-devel-<version>.pkg name; append the
