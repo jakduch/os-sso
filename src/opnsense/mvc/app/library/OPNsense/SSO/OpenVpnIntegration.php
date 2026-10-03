@@ -14,12 +14,7 @@ use RuntimeException;
 use SimpleXMLElement;
 
 /**
- * Owns the small part of an OpenVPN instance that enables deferred web authentication.
- *
- * OpenVPN's `various_flags` model field is deliberately a closed list, while its
- * generator emits every persisted value as a directive. The WebGUI therefore drops
- * our directives whenever an instance is saved. Reconciliation immediately before
- * OpenVPN generates its files restores the values without patching OPNsense core.
+ * Supplies the OpenVPN directives that enable deferred web authentication.
  */
 final class OpenVpnIntegration
 {
@@ -30,7 +25,7 @@ final class OpenVpnIntegration
 
 
 	/**
-	 * Reconcile config.xml and write the guard manifest under the same lock.
+	 * Validate configured instances and write the guard manifest under the same lock.
 	 *
 	 * @return array{changed: bool, instances: array<string, array<string, string>>}
 	 */
@@ -38,35 +33,65 @@ final class OpenVpnIntegration
 	{
 		return ConfigLock::with(function () use ($manifestPath): array {
 			$config = Config::getInstance();
+			$root = $config->object();
 			/*
 			 * Publish the desired instances before validating their OpenVPN side. If
 			 * validation fails (for example, core Authentication was enabled later),
 			 * the guard still knows which running instance must be stopped.
 			 */
-			self::writeManifest(self::manifest(self::desiredInstances($config->object())), $manifestPath);
-			$result = self::reconcile($config->object());
-			if ($result['changed'] && $config->save() === false) {
-				throw new RuntimeException('OpenVPN integration could not save config.xml');
+			$desired = self::desiredInstances($root);
+			$instances = self::openVpnInstances($root);
+			self::writeManifest(self::manifest($desired), $manifestPath);
+			$changed = self::removeLegacyFlags($instances);
+			if ($changed && $config->save() === false) {
+				throw new RuntimeException('OpenVPN integration could not remove legacy directives from config.xml');
 			}
+			self::validate($desired, $instances);
 
-			return $result;
+			return ['changed' => $changed, 'instances' => self::manifest($desired)];
 		});
 	}
 
 
 	/**
-	 * Apply the desired os-sso profiles to an in-memory config.xml tree.
+	 * Return additional generated options for one OpenVPN instance.
 	 *
-	 * Public as a test seam: production callers should use synchronize(), which also
-	 * serializes concurrent writes and updates the guard manifest.
-	 *
-	 * @return array{changed: bool, instances: array<string, array<string, string>>}
+	 * @return array<string, string|null>
 	 */
-	public static function reconcile(SimpleXMLElement $config): array
+	public static function instanceOptions(string $uuid): array
+	{
+		return self::options(Config::getInstance()->object(), $uuid);
+	}
+
+
+	/**
+	 * Public test seam for instanceOptions().
+	 *
+	 * @return array<string, string|null>
+	 */
+	public static function options(SimpleXMLElement $config, string $uuid): array
 	{
 		$desired = self::desiredInstances($config);
 		$instances = self::openVpnInstances($config);
+		self::validate($desired, $instances);
 
+		if (!isset($desired[$uuid])) {
+			return [];
+		}
+
+		return [
+			'auth-user-pass-verify' => self::hookValue($desired[$uuid]),
+			self::OPTIONAL_DIRECTIVE => null,
+		];
+	}
+
+
+	/**
+	 * @param array<string, string> $desired
+	 * @param array<string, SimpleXMLElement> $instances
+	 */
+	private static function validate(array $desired, array $instances): void
+	{
 		foreach ($desired as $uuid => $profile) {
 			if (!isset($instances[$uuid])) {
 				throw new RuntimeException("OpenVPN instance '{$uuid}' selected by profile '{$profile}' does not exist");
@@ -83,10 +108,38 @@ final class OpenVpnIntegration
 					"OpenVPN instance '{$uuid}' already has Authentication configured; clear it before enabling profile '{$profile}'"
 				);
 			}
+			foreach (self::flags($instance) as $flag) {
+				if (self::isOwnedHook($flag)) {
+					throw new RuntimeException(
+						"OpenVPN instance '{$uuid}' still contains a legacy os-sso authentication directive"
+					);
+				}
+			}
 		}
+	}
 
+
+	private static function hookValue(string $profile): string
+	{
+		return sprintf('"%s %s" via-file', self::HOOK, $profile);
+	}
+
+
+	private static function hookDirective(string $profile): string
+	{
+		return 'auth-user-pass-verify ' . self::hookValue($profile);
+	}
+
+
+	/**
+	 * Remove directives written by releases that predate the core configuration hook.
+	 *
+	 * @param array<string, SimpleXMLElement> $instances
+	 */
+	private static function removeLegacyFlags(array $instances): bool
+	{
 		$changed = false;
-		foreach ($instances as $uuid => $instance) {
+		foreach ($instances as $instance) {
 			$original = self::flags($instance);
 			$hadOwnedHook = false;
 			$flags = [];
@@ -103,26 +156,20 @@ final class OpenVpnIntegration
 					static fn(string $flag): bool => $flag !== self::OPTIONAL_DIRECTIVE,
 				));
 			}
-
-			if (isset($desired[$uuid])) {
-				$flags[] = self::hookDirective($desired[$uuid]);
-				$flags[] = self::OPTIONAL_DIRECTIVE;
-			}
-			$flags = array_values(array_unique($flags));
-
 			if ($flags !== $original) {
 				self::setFlags($instance, $flags);
 				$changed = true;
 			}
 		}
 
-		return ['changed' => $changed, 'instances' => self::manifest($desired)];
+		return $changed;
 	}
 
 
-	private static function hookDirective(string $profile): string
+	private static function isOwnedHook(string $flag): bool
 	{
-		return sprintf('auth-user-pass-verify "%s %s" via-file', self::HOOK, $profile);
+		$path = preg_quote(self::HOOK, '~');
+		return preg_match('~^auth-user-pass-verify "' . $path . '(?: [A-Za-z0-9_]{1,32})?" via-file$~D', $flag) === 1;
 	}
 
 
@@ -144,13 +191,6 @@ final class OpenVpnIntegration
 		}
 
 		return $result;
-	}
-
-
-	private static function isOwnedHook(string $flag): bool
-	{
-		$path = preg_quote(self::HOOK, '~');
-		return preg_match('~^auth-user-pass-verify "' . $path . '(?: [A-Za-z0-9_]{1,32})?" via-file$~D', $flag) === 1;
 	}
 
 

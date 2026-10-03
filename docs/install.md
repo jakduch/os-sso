@@ -4,7 +4,8 @@
 
 - **OPNsense 25.7 or newer** - the login-page SSO button hook (`ISSOContainer` /
   `listSSOproviders`) landed in core in 25.7.
-- For OpenVPN login: **OpenVPN 2.6+** on the firewall and a web-auth-capable client
+- For OpenVPN login: an OPNsense core build with the `openvpn_instance_config` plugin hook,
+  **OpenVPN 2.6+** on the firewall, and a web-auth-capable client
   (OpenVPN Connect, OpenVPN 3 Linux, Windows 2.6+). Managed OpenVPN instances use
   client-certificate verification plus browser authentication; leave the instance's
   core **Authentication** field empty.
@@ -40,9 +41,10 @@ same data is included in a normal OPNsense configuration backup.
 
 The code and authentication endpoints are unavailable while the package is missing.
 Before removal, the package stops the OpenVPN fail-closed guard and every managed
-OpenVPN instance; their saved directives deliberately remain so a manual restart cannot
-silently fall back to certificate-only access. Files below `/var/db/os-sso*` are runtime
-sessions, caches and locks, not durable configuration, and may be recreated or lost.
+OpenVPN instance. Removing the plugin also removes its generated authentication hook, so
+review or disable those instances before starting them again. Files below `/var/db/os-sso*`
+are runtime sessions, caches and locks, not durable configuration, and may be recreated or
+lost.
 
 ## From source
 

@@ -50,18 +50,17 @@ def load_manifest() -> dict[str, dict[str, str]] | None:
     return result
 
 
-def saved_flags() -> dict[str, tuple[list[str], str]] | None:
+def saved_instances() -> dict[str, str] | None:
     try:
         root = ET.parse(CONFIG_XML).getroot()
     except (OSError, ET.ParseError) as exception:
         log(f"cannot inspect config.xml: {exception}", syslog.LOG_ERR)
         return None
 
-    result: dict[str, tuple[list[str], str]] = {}
+    result: dict[str, str] = {}
     for instance in root.findall("./OPNsense/OpenVPN/Instances/Instance"):
         uuid = instance.attrib.get("uuid", "")
-        flags = [flag.strip() for flag in (instance.findtext("various_flags") or "").split(",") if flag.strip()]
-        result[uuid] = (flags, (instance.findtext("authmode") or "").strip())
+        result[uuid] = (instance.findtext("authmode") or "").strip()
     return result
 
 
@@ -86,13 +85,11 @@ def generated_config_valid(settings: dict[str, str]) -> bool:
 
 def saved_config_valid(
     uuid: str,
-    settings: dict[str, str],
-    instances: dict[str, tuple[list[str], str]] | None,
+    instances: dict[str, str] | None,
 ) -> bool:
     if instances is None or uuid not in instances:
         return False
-    flags, authmode = instances[uuid]
-    return authmode == "" and settings["auth_directive"] in flags and settings["optional_directive"] in flags
+    return instances[uuid] == ""
 
 
 def configctl(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -130,7 +127,7 @@ def main() -> None:
     last_problem: tuple[str, ...] = ()
     last_manifest: dict[str, dict[str, str]] = {}
     config_stamp: tuple[int, int] | None = None
-    config_instances: dict[str, tuple[list[str], str]] | None = {}
+    config_instances: dict[str, str] | None = {}
 
     while True:
         manifest = load_manifest()
@@ -150,7 +147,7 @@ def main() -> None:
             except OSError:
                 current_stamp = None
             if current_stamp != config_stamp:
-                config_instances = saved_flags()
+                config_instances = saved_instances()
                 config_stamp = current_stamp
         else:
             config_instances = {}
@@ -159,7 +156,7 @@ def main() -> None:
         for uuid, settings in manifest.items():
             if not process_running(settings["pid_file"]):
                 continue
-            if not saved_config_valid(uuid, settings, config_instances) or not generated_config_valid(settings):
+            if not saved_config_valid(uuid, config_instances) or not generated_config_valid(settings):
                 unsafe.append(uuid)
 
         problem = tuple(sorted(unsafe))

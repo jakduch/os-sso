@@ -31,7 +31,7 @@ try {
 	printf(
 		"OK: %d managed OpenVPN instance(s)%s\n",
 		count($result['instances']),
-		$result['changed'] ? ', config updated' : '',
+		$result['changed'] ? ', legacy config cleaned' : '',
 	);
 } catch (Throwable $exception) {
 	syslog(LOG_ERR, 'os-sso: OpenVPN integration failed: ' . $exception->getMessage());

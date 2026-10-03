@@ -60,9 +60,9 @@ Configure it under **System ▸ Access ▸ SSO VPN web-auth**. A **profile** def
 policy and can protect one or more OpenVPN servers: select the enabled server instances,
 protocol, the authentication server (picked from the configured OIDC/SAML servers), the
 host the client's browser opens, and the web-auth timeout. **Apply** writes
-`/usr/local/etc/sso/vpn.conf`, installs the deferred-auth directives in every selected
-instance and asks core to regenerate them. No manual custom option or SSH edit is
-required.
+`/usr/local/etc/sso/vpn.conf` and asks core to regenerate every selected instance. The
+plugin supplies its deferred-auth directives through core's generated-configuration hook;
+no manual custom option or SSH edit is required.
 
 Every selected OpenVPN instance must be an enabled **server** and its **Authentication**
 field must be empty: os-sso supplies that authentication hook. OPNsense core consequently
@@ -87,19 +87,19 @@ auth-user-pass-verify "/usr/local/opnsense/scripts/OPNsense/SSO/auth-user-pass-v
 ```
 
 Select an instance and apply the profile to move it under plugin management. The plugin
-then owns that directive and `auth-user-pass-optional`; disabling, deleting or moving the
-profile removes both from the old instance without touching its other options.
+then supplies that directive and `auth-user-pass-optional` only while core generates the
+selected instance. Disabling, deleting or moving the profile therefore removes both from
+the next generated configuration without touching the instance's saved options.
 
 ### Fail-closed guard
 
-OPNsense's OpenVPN form only knows its built-in option list, so saving an instance can
-discard plugin-owned directives. os-sso repairs them immediately before every normal
-OpenVPN **Apply**, and its supervised guard checks both `config.xml` and the generated
-runtime file once per second. If a running managed instance lacks exactly one expected
-auth hook, has another password hook alongside it, or loses `auth-user-pass-optional`, the
-guard stops it, repairs the saved configuration, and only then lets core configure it
-again. If repair fails, the affected instance stays stopped and the failure is written to
-the system log.
+The directives are not stored in `config.xml`; core asks installed plugins for additional
+options each time it generates an OpenVPN instance. A supervised guard checks the saved
+instance and generated runtime file once per second. If a running managed instance enables
+native password authentication, lacks exactly one expected auth hook, has another password
+hook alongside it, or loses `auth-user-pass-optional`, the guard stops it and only lets core
+configure it again after validation succeeds. If regeneration fails, the affected instance
+stays stopped and the failure is written to the system log.
 
 > **Mind the username.** OpenVPN takes it from the client and never revisits it on a
 > deferred-auth path: the browser login decides *whether* the tunnel comes up, not *whose*

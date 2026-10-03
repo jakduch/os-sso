@@ -6,6 +6,13 @@ T::group('HA XMLRPC integration');
 
 require_once dirname(__DIR__, 2) . '/src/etc/inc/plugins.inc.d/sso.inc';
 
+$hooks = sso_run();
+eq(
+	'sso_openvpn_instance_config',
+	$hooks['openvpn_instance_config'] ?? null,
+	'registers the generated OpenVPN instance configuration hook',
+);
+
 $areas = sso_xmlrpc_sync();
 eq(1, count($areas), 'registers exactly one HA synchronization area');
 

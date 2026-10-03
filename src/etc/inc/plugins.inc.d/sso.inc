@@ -16,13 +16,34 @@ function sso_configure()
 }
 
 
+function sso_run(): array
+{
+	return ['openvpn_instance_config' => 'sso_openvpn_instance_config'];
+}
+
+
+function sso_openvpn_instance_config(string $uuid): array
+{
+	try {
+		return \OPNsense\SSO\OpenVpnIntegration::instanceOptions($uuid);
+	} catch (\Throwable $exception) {
+		/*
+		 * plugins_run() catches Error; convert every failure into an exception so
+		 * OpenVPN generation aborts instead of silently losing authentication.
+		 */
+		throw new \RuntimeException(
+			'os-sso OpenVPN configuration failed: ' . $exception->getMessage(),
+			0,
+			$exception,
+		);
+	}
+}
+
+
 function sso_openvpn_sync(): void
 {
 	try {
-		$result = \OPNsense\SSO\OpenVpnIntegration::synchronize();
-		if ($result['changed']) {
-			syslog(LOG_NOTICE, 'os-sso: restored managed OpenVPN web-auth directives');
-		}
+		\OPNsense\SSO\OpenVpnIntegration::synchronize();
 	} catch (\Throwable $exception) {
 		/*
 		 * Never abort core's CRL hook. The guard manifest is written before the

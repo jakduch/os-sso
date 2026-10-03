@@ -14,8 +14,8 @@ use OPNsense\Core\Backend;
 
 /**
  * Settings API for the OpenVPN web-auth profiles. The CRUD actions are the base class's
- * grid helpers; applying writes vpn.conf, reconciles managed OpenVPN instances, lets
- * core regenerate their runtime configuration, and starts the fail-closed guard.
+ * grid helpers; applying writes vpn.conf, validates managed OpenVPN instances, lets core
+ * regenerate their runtime configuration, and starts the fail-closed guard.
  */
 class SettingsController extends ApiMutableModelControllerBase
 {

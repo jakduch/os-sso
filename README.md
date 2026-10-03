@@ -57,9 +57,10 @@ break-glass path.
 
 ## Install
 
-Needs **OPNsense 25.7 or newer**. Each release ships one package per FreeBSD ABI - check
-yours with `pkg config ABI`, download the match from the [Releases](../../releases) page,
-and install it:
+Needs **OPNsense 25.7 or newer**; managed OpenVPN web-auth also needs a core build with
+the `openvpn_instance_config` plugin hook. Each release ships one package per FreeBSD ABI -
+check yours with `pkg config ABI`, download the match from the [Releases](../../releases)
+page, and install it:
 
 ```sh
 pkg add os-sso-devel-*-FreeBSD-14.pkg   # pick the file matching your ABI
