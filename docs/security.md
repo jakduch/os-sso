@@ -3,6 +3,23 @@
 What os-sso refuses, and why. The [unit suite](../test/README.md) covers exactly this:
 every case is a refusal - the part an end-to-end run never reaches.
 
+This document describes implemented controls, not a claim that the plugin is free of
+vulnerabilities. It is an independently maintained third-party plugin; see
+[`SECURITY.md`](../SECURITY.md) for private reporting and [`NOTICE.md`](../NOTICE.md)
+for attribution and support status.
+
+## Package trust
+
+Release catalogues are signed with a repository-specific 4096-bit RSA key. The public
+key is committed to the source tree and its SHA-256 fingerprint is printed in the
+installation guide. The signing key is held only as a protected GitHub Environment
+secret and is not part of the repository or package. Workflow dependencies are pinned
+to exact commits, locked Composer dependencies are audited before packaging, and a
+release is built separately for each supported FreeBSD ABI.
+
+This signature authenticates packages produced by this fork. It does not make the fork
+an official OPNsense repository or extend Deciso support to it.
+
 ## Sessions
 
 Privileges are never stored in the session - the OPNsense ACL resolves them from group

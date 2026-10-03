@@ -8,12 +8,15 @@ import re
 import subprocess
 import syslog
 import time
-import xml.etree.ElementTree as ET
+# OPNsense base does not ship defusedxml. saved_flags() applies a byte limit and
+# rejects DTD/entity declarations before this root-owned local file is parsed.
+import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
 from pathlib import Path
 
 
 MANIFEST = Path("/usr/local/etc/sso/openvpn-instances.json")
 CONFIG_XML = Path("/conf/config.xml")
+CONFIG_XML_MAX_BYTES = 16 * 1024 * 1024
 UUID = re.compile(r"^[0-9a-f-]{36}$")
 CHECK_INTERVAL = 1.0
 REPAIR_BACKOFF = 30.0
@@ -56,8 +59,20 @@ def load_manifest() -> dict[str, dict[str, str]] | None:
 
 def saved_flags() -> dict[str, tuple[list[str], str]] | None:
     try:
-        root = ET.parse(CONFIG_XML).getroot()
-    except (OSError, ET.ParseError) as exception:
+        with CONFIG_XML.open("rb") as config_file:
+            document = config_file.read(CONFIG_XML_MAX_BYTES + 1)
+        if len(document) > CONFIG_XML_MAX_BYTES:
+            raise ValueError(f"document exceeds {CONFIG_XML_MAX_BYTES} bytes")
+        # config.xml is root-owned local state, not network input. Still reject the
+        # two XML constructs that can turn a damaged or maliciously replaced file
+        # into entity expansion, and cap its size before asking the stdlib parser to
+        # allocate the tree. DefusedXML is intentionally not a runtime dependency on
+        # the appliance; these checks cover the parser features this reader does not
+        # need.  nosemgrep: python.lang.security.audit.xml.etree-element-tree
+        if re.search(br"<!\s*(?:DOCTYPE|ENTITY)\b", document, re.IGNORECASE):
+            raise ValueError("DTD and entity declarations are not allowed")
+        root = ET.fromstring(document)  # nosemgrep: python.lang.security.audit.xml.etree-element-tree
+    except (OSError, ValueError, ET.ParseError) as exception:
         log(f"cannot inspect config.xml: {exception}", syslog.LOG_ERR)
         return None
 
