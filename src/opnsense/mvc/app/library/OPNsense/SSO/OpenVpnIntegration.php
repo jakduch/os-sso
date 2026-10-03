@@ -239,7 +239,10 @@ final class OpenVpnIntegration
 		if (!is_dir($directory) && !@mkdir($directory, 0700, true) && !is_dir($directory)) {
 			throw new RuntimeException("Cannot create OpenVPN integration directory '{$directory}'");
 		}
-		$data = json_encode(['version' => 1, 'instances' => $instances], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+		$data = json_encode(
+			['version' => 1, 'instances' => (object)$instances],
+			JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,
+		);
 		if ($data === false) {
 			throw new RuntimeException('Cannot encode the OpenVPN integration manifest');
 		}

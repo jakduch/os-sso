@@ -46,3 +46,4 @@ jobs:
         run: |
           sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /var/db/os-sso
           php test/unit/run.php
+          python3 test/unit/test_vpn_guard.py

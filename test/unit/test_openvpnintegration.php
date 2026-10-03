@@ -195,3 +195,23 @@ $tree = vpnTree([vpnProfile('legacy', '')], [vpnInstance(VPN_UUID_A, 'float')]);
 $result = OpenVpnIntegration::reconcile($tree);
 falsy($result['changed'], 'a legacy profile without an instance keeps manual wiring untouched');
 eq([], $result['instances'], 'a legacy manual profile is not guarded as managed');
+
+T::group('OpenVpnIntegration: guard manifest serialization');
+
+$manifestPath = tempnam(sys_get_temp_dir(), 'os-sso-manifest-');
+if ($manifestPath === false) {
+	T::skip('an empty manifest uses a JSON object for instances', 'cannot create a temporary file');
+} else {
+	try {
+		$writer = new ReflectionMethod(OpenVpnIntegration::class, 'writeManifest');
+		$writer->invoke(null, [], $manifestPath);
+		$manifest = json_decode((string)file_get_contents($manifestPath));
+		truthy(
+			is_object($manifest?->instances ?? null),
+			'an empty manifest uses a JSON object for instances',
+		);
+		eq([], get_object_vars($manifest->instances), 'the empty instance map has no entries');
+	} finally {
+		unlink($manifestPath);
+	}
+}

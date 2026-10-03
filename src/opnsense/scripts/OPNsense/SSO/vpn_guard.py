@@ -33,6 +33,10 @@ def load_manifest() -> dict[str, dict[str, str]] | None:
         return None
 
     instances = payload.get("instances", {})
+    # PHP encoded an empty associative array as [] in older manifests. Accept only
+    # that exact legacy shape; a non-empty list remains invalid and fails closed.
+    if instances == []:
+        instances = {}
     if not isinstance(instances, dict):
         log("integration manifest has no instance map", syslog.LOG_ERR)
         return None
