@@ -299,10 +299,12 @@ jobs:
           - freebsd: "14.3"
             artifact_abi: "FreeBSD-14"
             repo_abi: "FreeBSD:14:amd64"
+            archive: "repository-FreeBSD-14.tar.gz"
             opnsense: "25.7"
           - freebsd: "15.1"
             artifact_abi: "FreeBSD-15"
             repo_abi: "FreeBSD:15:amd64"
+            archive: "repository-FreeBSD-15.tar.gz"
             opnsense: ""
     steps:
       - name: Download package
@@ -315,10 +317,11 @@ jobs:
         uses: vmactions/freebsd-vm@a2f9a41fa97f6848b8c3b791087dfcdaa5b473ff # v1
         env:
           REPO_ABI: ${{ matrix.repo_abi }}
+          REPO_ARCHIVE: ${{ matrix.archive }}
           OPNSENSE_REL: ${{ matrix.opnsense }}
           PKG_REPO_SIGNING_KEY_B64: ${{ secrets.PKG_REPO_SIGNING_KEY_B64 }}
         with:
-          envs: "REPO_ABI OPNSENSE_REL PKG_REPO_SIGNING_KEY_B64"
+          envs: "REPO_ABI REPO_ARCHIVE OPNSENSE_REL PKG_REPO_SIGNING_KEY_B64"
           usesh: true
           release: ${{ matrix.freebsd }}
           prepare: |
@@ -349,12 +352,16 @@ jobs:
             rm -f /tmp/os-sso-repository.key
             sha256 -q "${SITE}"/*.pkg > "${SITE}/PACKAGE.SHA256"
             find "${SITE}" -maxdepth 1 -type f -print | sort
+            # upload-artifact rejects ':' in paths for cross-platform reasons.
+            # Preserve pkg's canonical FreeBSD:<major>:amd64 layout inside one
+            # portable archive, then extract it on the Pages runner.
+            tar -czf "${REPO_ARCHIVE}" -C repository-site .
 
       - name: Upload signed repository subtree
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pkg-repository-${{ matrix.artifact_abi }}
-          path: repository-site
+          path: ${{ matrix.archive }}
           if-no-files-found: error
 
   assemble-repository:
@@ -370,7 +377,16 @@ jobs:
         with:
           pattern: pkg-repository-*
           merge-multiple: true
-          path: _site
+          path: _archives
+
+      - name: Restore canonical pkg repository paths
+        run: |
+          mkdir -p _site
+          for archive in _archives/repository-FreeBSD-*.tar.gz; do
+            tar -xzf "$archive" -C _site
+          done
+          test -d '_site/pkg/FreeBSD:14:amd64'
+          test -d '_site/pkg/FreeBSD:15:amd64'
 
       - name: Add bootstrap and public trust material
         run: |
