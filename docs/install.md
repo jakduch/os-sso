@@ -12,7 +12,7 @@
 
 ## From the signed repository
 
-This fork publishes a small repository containing only `os-sso-devel`. It does not
+This fork publishes a small repository containing only `os-sso`. It does not
 replace or disable any OPNsense repository. The catalogue is signed with a dedicated
 4096-bit RSA key; `pkg` verifies that signature before trusting package metadata.
 
@@ -40,8 +40,22 @@ Verify the result:
 
 ```sh
 pkg -vv | sed -n '/Repositories:/,$p'
-pkg rquery -r JakduchOSSSO '%n-%v %R' os-sso-devel
-pkg info os-sso-devel
+pkg rquery -r JakduchOSSSO '%n-%v %R' os-sso
+pkg info os-sso
+```
+
+Releases up to `v2026.10.8` used the package name `os-sso-devel`. The bootstrap detects
+that package, removes it and installs `os-sso`. Configuration under `OPNsense/SSO` in
+`/conf/config.xml` remains intact. The removal hook stops managed OpenVPN instances and
+the installation hook synchronizes and starts them again, so perform the replacement in
+a maintenance window even though no configuration is discarded.
+
+For that one-time replacement, download and run the dedicated reinstall wrapper:
+
+```sh
+fetch -qo /tmp/os-sso-reinstall.sh https://jakduch.github.io/os-sso/reinstall.sh
+/bin/sh /tmp/os-sso-reinstall.sh
+rm -f /tmp/os-sso-reinstall.sh
 ```
 
 For an HA update, upgrade the backup first, confirm its WebGUI/SSO/OpenVPN health, then
@@ -49,8 +63,8 @@ upgrade the master and test one controlled failover:
 
 ```sh
 pkg update -f
-pkg upgrade os-sso-devel
-/usr/local/opnsense/scripts/firmware/register.php install os-sso-devel
+pkg upgrade os-sso
+/usr/local/opnsense/scripts/firmware/register.php install os-sso
 ```
 
 The repository has ABI-specific catalogues at `pkg/FreeBSD:14:amd64` and
@@ -68,8 +82,9 @@ base from [GitHub Releases](https://github.com/jakduch/os-sso/releases) - check 
 `pkg config ABI` (e.g. `FreeBSD:14:amd64` → the `…-FreeBSD-14.pkg`), then install:
 
 ```sh
-pkg add os-sso-devel-*-FreeBSD-14.pkg   # pick the file matching your ABI
-/usr/local/opnsense/scripts/firmware/register.php install os-sso-devel
+pkg delete -y os-sso-devel              # only when the old package is installed
+pkg add os-sso-*-FreeBSD-14.pkg         # pick the file matching your ABI
+/usr/local/opnsense/scripts/firmware/register.php install os-sso
 ```
 
 Then reload the WebGUI (or reboot). The new server types appear under
@@ -106,7 +121,7 @@ pkg update -f
 ```
 
 To remove the plugin as well, use the OPNsense firmware page or `pkg delete
-os-sso-devel`. The package's pre-deinstall hook stops managed OpenVPN instances rather
+os-sso`. The package's pre-deinstall hook stops managed OpenVPN instances rather
 than allowing them to continue with a missing web-auth verifier.
 
 ## From source

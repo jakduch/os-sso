@@ -40,12 +40,15 @@ jobs:
       - name: Check package script syntax
         run: |
           sh -n ./+POST_INSTALL.post ./+PRE_DEINSTALL.post repository/bootstrap.sh \
-            tools/extract-strings.sh test/package_scripts.sh
+            repository/reinstall.sh \
+            tools/extract-strings.sh test/package_scripts.sh test/repository_scripts.sh
           shellcheck -x ./+POST_INSTALL.post ./+PRE_DEINSTALL.post \
-            repository/bootstrap.sh tools/extract-strings.sh \
+            repository/bootstrap.sh repository/reinstall.sh tools/extract-strings.sh \
+            test/package_scripts.sh test/repository_scripts.sh \
             src/opnsense/scripts/OPNsense/SSO/*.sh \
             src/etc/rc.d/os-sso-vpn-guard
           sh test/package_scripts.sh
+          sh test/repository_scripts.sh
 
       - name: Verify repository trust material
         run: |
