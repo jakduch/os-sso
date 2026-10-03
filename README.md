@@ -72,10 +72,14 @@ fetch -qo /tmp/os-sso-bootstrap.sh https://jakduch.github.io/os-sso/bootstrap.sh
 ```
 
 The bootstrap pins a 4096-bit RSA repository key before `pkg update` and installs only
-`os-sso-devel`; package metadata is published separately for `FreeBSD:14:amd64` and
+`os-sso`; package metadata is published separately for `FreeBSD:14:amd64` and
 `FreeBSD:15:amd64`. Verify the key fingerprint and see the manual and HA procedure in
 [docs/install.md](docs/install.md). Release assets remain available from
 [GitHub Releases](https://github.com/jakduch/os-sso/releases) as a fallback.
+
+Installations still carrying the former `os-sso-devel` package can use the dedicated
+[`reinstall.sh`](https://jakduch.github.io/os-sso/reinstall.sh) wrapper documented in
+the installation guide. It preserves the configuration while replacing the package.
 
 Reload the WebGUI (or reboot). The new server types appear under **System ▸ Access ▸
 Servers**.
@@ -150,5 +154,5 @@ php test/unit/run.php    # ~590 assertions, no setup
 
 BSD-2-Clause. Original project © 2026 Maxime Wewer; fork modifications © 2026 Jakub
 Duchek. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The binary package includes
-both notices under `/usr/local/share/licenses/os-sso-devel` and
+both notices under `/usr/local/share/licenses/os-sso` and
 `/usr/local/share/doc/os-sso`.

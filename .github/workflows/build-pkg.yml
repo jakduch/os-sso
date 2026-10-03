@@ -168,11 +168,10 @@ jobs:
             git config --global --add safe.directory '*'
             cd plugins/$PLUGIN_CATEGORY/$PLUGIN_NAME
             # On the command line so it beats the ?= in Mk/defaults.mk, which has no
-            # php here to derive a value from.
-            # This repository distributes fork/test builds alongside the official
-            # os-sso package.  Keep the -devel identity even when building from a
-            # stable plugins tree, where devel.mk is intentionally absent.
-            make package PLUGIN_PHP="${PLUGIN_PHP}" PLUGIN_DEVEL=yes
+            # php here to derive a value from.  This maintained repository publishes
+            # the production package name os-sso; plugins.mk automatically declares
+            # os-sso-devel as a conflict.
+            make package PLUGIN_PHP="${PLUGIN_PHP}"
             ls -la work/pkg/
             if [ -n "${OPNSENSE_REL}" ]; then
               echo ">>> re-creating the artifact with OPNsense's pkg (so its pkg can extract it)"
@@ -192,8 +191,11 @@ jobs:
               echo ">>> repackaged with $("$OLDPKG" -v):"; ls -la work/pkg/
             fi
             BUILT=$(ls work/pkg/*.pkg | head -n 1)
+            tar -xOf "$BUILT" +COMPACT_MANIFEST > /tmp/os-sso-package-manifest
+            grep -Eq '"name"[[:space:]]*:[[:space:]]*"os-sso"' /tmp/os-sso-package-manifest
+            grep -Eq '"conflicts"[[:space:]]*:[^]]*"os-sso-devel"' /tmp/os-sso-package-manifest
             tar -tf "$BUILT" > /tmp/os-sso-package-contents
-            grep -Eq '^/?usr/local/share/licenses/os-sso-devel/LICENSE$' /tmp/os-sso-package-contents
+            grep -Eq '^/?usr/local/share/licenses/os-sso/LICENSE$' /tmp/os-sso-package-contents
             grep -Eq '^/?usr/local/share/doc/os-sso/NOTICE.md$' /tmp/os-sso-package-contents
             if grep -Eq '^/?usr/local/usr/local/' /tmp/os-sso-package-contents; then
               echo ">>> invalid duplicated /usr/local prefix in package" >&2
@@ -201,7 +203,7 @@ jobs:
             fi
 
       - name: Tag the .pkg filename with its ABI
-        # Both matrix legs emit the same os-sso-devel-<version>.pkg name; append the
+        # Both matrix legs emit the same os-sso-<version>.pkg name; append the
         # ABI so the release can carry both without a filename collision.
         run: |
           PKGDIR="plugins/${PLUGIN_CATEGORY}/${PLUGIN_NAME}/work/pkg"
@@ -402,6 +404,7 @@ jobs:
           install -m 0644 repository/os-sso.pub _site/os-sso.pub
           install -m 0644 repository/JakduchOSSSO.conf _site/JakduchOSSSO.conf
           install -m 0755 repository/bootstrap.sh _site/bootstrap.sh
+          install -m 0755 repository/reinstall.sh _site/reinstall.sh
           test "$(sha256sum _site/os-sso.pub | awk '{print $1}')" = \
             "3efc7a48172fb2f5efe0249de9064c771b902876e43332af28871a04b8b486e7"
           find _site -type f -print | sort
