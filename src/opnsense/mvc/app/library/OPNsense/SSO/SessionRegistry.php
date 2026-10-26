@@ -88,7 +88,7 @@ final class SessionRegistry
      *
      * @param array $meta kind (portal|vpn), username, provider, issuer, sub, sid,
      *        lifetime (s, 0 = none), plus what it takes to take it away: cp_session +
-     *        zone, or vpn_cn
+     *        zone, or vpn_username
      * @return bool whether the record was actually written -- a caller that grants
      *         network access has to know, since an access nothing recorded is one
      *         nothing can revoke
@@ -116,6 +116,7 @@ final class SessionRegistry
             'cp_session' => (string)($meta['cp_session'] ?? ''),
             'zone' => (string)($meta['zone'] ?? ''),
             'vpn_cn' => (string)($meta['vpn_cn'] ?? ''),
+            'vpn_username' => (string)($meta['vpn_username'] ?? $meta['vpn_cn'] ?? ''),
             'started' => time(),
             'expires_at' => time() + ($lifetime > 0 ? min($lifetime, self::GRANT_TTL) : self::GRANT_TTL),
         ]);
@@ -225,11 +226,12 @@ final class SessionRegistry
                 // Core returns terminateCause=UNKNOWN when the session is already gone.
                 return is_array($response) && is_string($response['terminateCause'] ?? null);
             case self::VPN:
-                $commonName = (string)($entry['vpn_cn'] ?? '');
-                if ($commonName === '') {
+                // Older grants named the client username vpn_cn; it was never the certificate CN.
+                $clientUsername = (string)($entry['vpn_username'] ?? $entry['vpn_cn'] ?? '');
+                if ($clientUsername === '') {
                     return false;
                 }
-                $response = json_decode((string)(new Backend())->configdpRun('sso vpn_kill', [$commonName]), true);
+                $response = json_decode((string)(new Backend())->configdpRun('sso vpn_kill', [$clientUsername]), true);
                 return is_array($response) && ($response['status'] ?? '') === 'ok';
             default:
                 $target = (string)($entry['file'] ?? '');

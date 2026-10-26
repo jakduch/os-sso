@@ -117,8 +117,10 @@ unwritable registry refuses the new tunnel instead of creating untracked access.
 > deferred-auth path: the browser login decides *whether* the tunnel comes up, not *whose*
 > it is. **Require the username to match** is therefore enabled by default and refuses
 > an empty username as well as a mismatch. Turn it off only when the server never uses
-> the username for `username-as-common-name`, a `client-config-dir`, per-user rules,
-> addressing or revocation, and clients intentionally send a throwaway value. Both names
+> the username for `username-as-common-name`, a `client-config-dir`, per-user rules or
+> addressing, and clients intentionally send a throwaway value. Revocation still locates
+> that exact client username in management status; it does not assume that the certificate
+> common name equals the username. Both names
 > are logged on the firewall when that compatibility mode is used.
 
 Use a web-auth-capable client (OpenVPN Connect, OpenVPN 3 Linux) - see
