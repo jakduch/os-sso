@@ -14,15 +14,23 @@ concurrency:
 
 jobs:
   unit:
-    name: PHP 8.3 unit and dependency checks
+    name: PHP ${{ matrix.php }} unit and dependency checks
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: "8.3"
+            core: "8cc69b21e0f4c2622fc8a62df2a15ba7cb1e731f"
+          - php: "8.5"
+            core: "d9346b31c73fbde85742406aae77d4328696d2b8"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up PHP 8.3
+      - name: Set up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
-          php-version: "8.3"
+          php-version: ${{ matrix.php }}
           extensions: curl, dom, gettext, mbstring, openssl, simplexml, xml
           coverage: none
 
@@ -41,14 +49,15 @@ jobs:
         run: |
           sh -n ./+POST_INSTALL.post ./+PRE_DEINSTALL.post repository/bootstrap.sh \
             repository/reinstall.sh \
-            tools/extract-strings.sh test/package_scripts.sh test/repository_scripts.sh
+            tools/extract-strings.sh test/package_scripts.sh test/repository_scripts.sh test/vpn_verdict.sh
           shellcheck -x ./+POST_INSTALL.post ./+PRE_DEINSTALL.post \
             repository/bootstrap.sh repository/reinstall.sh tools/extract-strings.sh \
-            test/package_scripts.sh test/repository_scripts.sh \
+            test/package_scripts.sh test/repository_scripts.sh test/vpn_verdict.sh \
             src/opnsense/scripts/OPNsense/SSO/*.sh \
             src/etc/rc.d/os-sso-vpn-guard src/etc/rc.syshook.d/config/50-sso-openvpn
           sh test/package_scripts.sh
           sh test/repository_scripts.sh
+          sh test/vpn_verdict.sh
 
       - name: Verify repository trust material
         run: |
@@ -61,8 +70,19 @@ jobs:
           sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /var/db/os-sso
           php test/unit/run.php
           python3 test/unit/test_vpn_guard.py
+          python3 test/unit/test_vpn_kill.py
+
+      - name: Verify concurrent writes against OPNsense core
+        env:
+          CORE_REVISION: ${{ matrix.core }}
+        run: |
+          curl --fail --silent --show-error --retry 2 \
+            "https://raw.githubusercontent.com/opnsense/core/${CORE_REVISION}/src/opnsense/mvc/app/library/OPNsense/Core/Config.php" \
+            -o "$RUNNER_TEMP/opnsense-core-config.php"
+          php test/integration/core_config_lock.php "$RUNNER_TEMP/opnsense-core-config.php"
 
       - name: Static security analysis
+        if: matrix.php == '8.3'
         run: |
           docker run --rm -v "$PWD:/src" -w /src \
             semgrep/semgrep@sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b \

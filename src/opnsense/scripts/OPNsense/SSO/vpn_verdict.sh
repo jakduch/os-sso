@@ -8,6 +8,7 @@
 set -eu
 
 SID=$(printf '%s' "${1:-}" | tr -cd 'a-f0-9')
+MODE=${2:-0}
 VERDICT=$(printf '%s' "${2:-0}" | tr -cd '01')
 BROWSER_IP=$(printf '%s' "${3:-}" | tr -cd '0-9a-fA-F.:')
 # The account that actually signed in at the IdP.
@@ -34,8 +35,14 @@ fi
 # Atomically claim the mapping: the rename is the single-use gate, so two
 # concurrent verdicts for one sid cannot both read it (the loser's mv fails).
 # mv on a missing source also fails, covering the unknown-session case.
-WORK="$MAP.$$"
-if ! mv "$MAP" "$WORK" 2>/dev/null; then
+WORK="$MAP"
+if [ "$MODE" != "inspect" ]; then
+    WORK="$MAP.$$"
+    if ! mv "$MAP" "$WORK" 2>/dev/null; then
+        echo "unknown vpn session"
+        exit 1
+    fi
+elif [ ! -f "$WORK" ]; then
     echo "unknown vpn session"
     exit 1
 fi
@@ -44,7 +51,7 @@ CONTROL=$(sed -n 1p "$WORK")
 CLIENT_IP=$(sed -n 2p "$WORK")
 CLAIMED_USER=$(sed -n 3p "$WORK")   # empty for a session started before the upgrade
 PROFILE=$(sed -n 4p "$WORK")        # likewise
-rm -f "$WORK"   # single use
+[ "$MODE" = "inspect" ] || rm -f "$WORK"   # verdicts are single use
 
 # The username rule belongs to the profile that deferred this attempt. A session file
 # written before profiles existed names none, and then there is nothing to look up.
@@ -87,7 +94,9 @@ if [ -n "$CLAIMED_USER" ] && [ "$CLAIMED_USER" != "$AUTH_USER" ]; then
         "vpn: client asked for '$CLAIMED_USER', '$AUTH_USER' signed in (not enforced)"
 fi
 
-printf '%s' "$VERDICT" > "$CONTROL"
+if [ "$MODE" != "inspect" ]; then
+    printf '%s' "$VERDICT" > "$CONTROL"
+fi
 # Echo the common name the tunnel will carry back to the caller: OpenVPN keeps using the
 # name the client sent, so it is the only handle a later revocation can kill it with.
 if [ -n "$CLAIMED_USER" ]; then

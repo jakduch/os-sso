@@ -181,15 +181,11 @@ class SamlController extends ApiControllerBase
             // OpenVPN deferred web-auth path: authorize the tunnel, no WebGUI session.
             $vpn = (string)($state['vpn'] ?? '');
             if ($vpn !== '') {
-                $commonName = VpnAuthorizer::authorize($vpn, $username, (string)($_SERVER['REMOTE_ADDR'] ?? ''));
-                SessionRegistry::recordGrant([
-                    'kind' => SessionRegistry::VPN,
-                    'username' => $username,
+                VpnAuthorizer::authorize($vpn, $username, (string)($_SERVER['REMOTE_ADDR'] ?? ''), [
                     'provider' => (string)$provider,
                     'issuer' => $protocol->getIdpEntityId(),
                     'sub' => $identity->subject,
                     'sid' => $protocol->getLastSessionIndex(),
-                    'vpn_cn' => $commonName,
                     'lifetime' => (int)$auth->ssoSessionLifetime,
                 ]);
                 $this->html();

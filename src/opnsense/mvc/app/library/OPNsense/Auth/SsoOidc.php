@@ -382,6 +382,8 @@ class SsoOidc extends Local implements IAuthConnector
                     . 'every request rather than accepting any source. Matched on the direct TCP peer, never '
                     . 'on a forwardable header.'),
                 'type' => 'text',
+                'validate' => fn($v) => \OPNsense\SSO\SourceGate::isValidList((string)$v)
+                    ? [] : [gettext('Enter valid source IP addresses or CIDR networks.')],
             ],
             'sso_button_label' => [
                 'name' => gettext('Login button label'),

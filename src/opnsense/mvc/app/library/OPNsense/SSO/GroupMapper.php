@@ -194,6 +194,7 @@ final class GroupMapper
                     $uid,
                     (string)$group->name
                 ));
+                $granted[$groupName] = true;
                 continue;
             }
             $changed = $this->removeMember($group, $uid) || $changed;

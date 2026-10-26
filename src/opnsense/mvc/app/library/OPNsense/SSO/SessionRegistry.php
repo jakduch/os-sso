@@ -95,12 +95,18 @@ final class SessionRegistry
      */
     public static function recordGrant(array $meta): bool
     {
+        return self::createGrant($meta) !== null;
+    }
+
+    public static function createGrant(array $meta): ?string
+    {
         $kind = (string)($meta['kind'] ?? '');
         if (!in_array($kind, [self::PORTAL, self::VPN], true)) {
-            return false;
+            return null;
         }
         $lifetime = max(0, (int)($meta['lifetime'] ?? 0));
-        return self::write(hash('sha256', $kind . '|' . bin2hex(random_bytes(16))), [
+        $handle = hash('sha256', $kind . '|' . bin2hex(random_bytes(16)));
+        $written = self::write($handle, [
             'kind' => $kind,
             'username' => (string)($meta['username'] ?? ''),
             'provider' => (string)($meta['provider'] ?? ''),
@@ -113,6 +119,7 @@ final class SessionRegistry
             'started' => time(),
             'expires_at' => time() + ($lifetime > 0 ? min($lifetime, self::GRANT_TTL) : self::GRANT_TTL),
         ]);
+        return $written ? $handle : null;
     }
 
     /**
@@ -131,12 +138,26 @@ final class SessionRegistry
             syslog(LOG_WARNING, 'os-sso: cannot record the session: ' . $e->getMessage());
             return false;
         }
-        if (@file_put_contents($file, json_encode($entry), LOCK_EX) === false) {
-            syslog(LOG_WARNING, 'os-sso: cannot write the session record ' . $file);
+        $data = json_encode($entry);
+        if ($data === false) {
             return false;
         }
-        @chmod($file, 0600);
-        return true;
+        $temporary = $file . '.' . bin2hex(random_bytes(8)) . '.tmp';
+        try {
+            if (@file_put_contents($temporary, $data, LOCK_EX) !== strlen($data)) {
+                syslog(LOG_WARNING, 'os-sso: cannot write the complete session record');
+                return false;
+            }
+            if (!@chmod($temporary, 0600) || !@rename($temporary, $file)) {
+                syslog(LOG_WARNING, 'os-sso: cannot publish the session record');
+                return false;
+            }
+            return true;
+        } finally {
+            if (is_file($temporary)) {
+                @unlink($temporary); // @ - failed writes leave no partial registry entry
+            }
+        }
     }
 
     /** Drop the record for a session that ended normally. */
@@ -162,9 +183,22 @@ final class SessionRegistry
             if (!$matches($entry)) {
                 continue;
             }
-            self::revoke($entry);
-            @unlink($file);
-            $killed++;
+            try {
+                $revoked = self::revoke($entry);
+            } catch (\Throwable $error) {
+                syslog(LOG_ERR, 'os-sso: revocation backend failed: ' . $error->getMessage());
+                $revoked = false;
+            }
+            if (!$revoked) {
+                $entry['revocation_pending'] = true;
+                unset($entry['id']);
+                self::write(basename($file, '.json'), $entry);
+                syslog(LOG_ERR, 'os-sso: revocation failed; retaining the session record for retry');
+                continue;
+            }
+            if (@unlink($file) || !is_file($file)) {
+                $killed++;
+            }
         }
         return $killed;
     }
@@ -177,27 +211,32 @@ final class SessionRegistry
      * (which also removes the client's address from the zone's pf table), or ask it to
      * kill the tunnels of that common name.
      */
-    private static function revoke(array $entry): void
+    private static function revoke(array $entry): bool
     {
         switch ((string)($entry['kind'] ?? self::WEBGUI)) {
             case self::PORTAL:
                 $session = (string)($entry['cp_session'] ?? '');
-                if ($session !== '') {
-                    (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso revocation']);
+                if ($session === '') {
+                    return false;
                 }
-                break;
+                $response = json_decode((string)(new Backend())->configdpRun(
+                    'captiveportal disconnect', [$session, 'os-sso revocation']
+                ), true);
+                // Core returns terminateCause=UNKNOWN when the session is already gone.
+                return is_array($response) && is_string($response['terminateCause'] ?? null);
             case self::VPN:
                 $commonName = (string)($entry['vpn_cn'] ?? '');
-                if ($commonName !== '') {
-                    (new Backend())->configdpRun('sso vpn_kill', [$commonName]);
+                if ($commonName === '') {
+                    return false;
                 }
-                break;
+                $response = json_decode((string)(new Backend())->configdpRun('sso vpn_kill', [$commonName]), true);
+                return is_array($response) && ($response['status'] ?? '') === 'ok';
             default:
                 $target = (string)($entry['file'] ?? '');
-                // Only ever unlink inside the session directory we recorded from.
-                if ($target !== '' && str_contains(basename($target), 'sess_') && is_file($target)) {
-                    @unlink($target);
+                if ($target === '' || !str_starts_with(basename($target), 'sess_')) {
+                    return false;
                 }
+                return !is_file($target) || @unlink($target);
         }
     }
 
@@ -210,8 +249,14 @@ final class SessionRegistry
     public static function sweep(): int
     {
         $now = time();
-        $accounts = new LocalAccountWriter();
+        $accounts = [];
+        foreach ((new LocalAccountWriter())->users() as $node) {
+            $accounts[(string)$node->name] = $node;
+        }
         return self::destroyWhere(function (array $entry) use ($now, $accounts) {
+            if (!empty($entry['revocation_pending'])) {
+                return true;
+            }
             $expires = (int)($entry['expires_at'] ?? 0);
             if ($expires > 0 && $expires <= $now) {
                 return true;
@@ -223,7 +268,7 @@ final class SessionRegistry
             // paths that end sessions themselves all land here.
             $username = (string)($entry['username'] ?? '');
             if ($username !== '') {
-                $node = $accounts->findByName($username);
+                $node = $accounts[$username] ?? null;
                 if ($node !== null && !LocalAccount::isUsable($node)) {
                     return true;
                 }

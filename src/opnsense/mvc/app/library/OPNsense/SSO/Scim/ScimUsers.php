@@ -147,10 +147,11 @@ final class ScimUsers
     }
 
     /** PUT: the client sends the whole resource, we apply what we can hold. */
-    public function replace(string $id, array $payload): array
+    public function replace(string $id, array $payload, string $ifMatch = ''): array
     {
-        return ConfigLock::with(function () use ($id, $payload) {
+        return ConfigLock::with(function () use ($id, $payload, $ifMatch) {
             $node = $this->requireNode($id);
+            $this->assertIfMatch($node, $ifMatch);
             $this->assertMayTouch($node);
             // A PUT states the whole resource, userName included: ignoring a renamed one
             // left the directory and the firewall disagreeing about who this account is,
@@ -175,10 +176,11 @@ final class ScimUsers
      * store (locale, timezone, name.givenName...), and failing the whole operation
      * because of one of them would stall the sync.
      */
-    public function patch(string $id, array $operations): array
+    public function patch(string $id, array $operations, string $ifMatch = ''): array
     {
-        return ConfigLock::with(function () use ($id, $operations) {
+        return ConfigLock::with(function () use ($id, $operations, $ifMatch) {
             $node = $this->requireNode($id);
+            $this->assertIfMatch($node, $ifMatch);
             $this->assertMayTouch($node);
             $changed = false;
             $renamed = false;
@@ -197,6 +199,10 @@ final class ScimUsers
                 }
                 // No path: the value is a map of attributes to apply.
                 if ($path === '' && is_array($value)) {
+                    if (array_key_exists('userName', $value)) {
+                        $renamed = $this->rename($node, (string)$value['userName']) || $renamed;
+                        $changed = $renamed || $changed;
+                    }
                     $changed = $this->applyAttributes($node, $value) || $changed;
                     if (array_key_exists('active', $value)) {
                         $changed = $this->setActive($node, $this->truthy($value['active'])) || $changed;
@@ -240,10 +246,11 @@ final class ScimUsers
      * those with it. The account stops working immediately, which is what the client
      * actually asked for.
      */
-    public function deactivate(string $id): void
+    public function deactivate(string $id, string $ifMatch = ''): void
     {
-        ConfigLock::with(function () use ($id) {
+        ConfigLock::with(function () use ($id, $ifMatch) {
             $node = $this->requireNode($id);
+            $this->assertIfMatch($node, $ifMatch);
             $this->assertMayTouch($node);
             if ($this->setActive($node, false)) {
                 $this->touch($node);
@@ -475,8 +482,9 @@ final class ScimUsers
     /** Deactivating also ends the sessions -- that is the whole point of SCIM here. */
     private function setActive(\SimpleXMLElement $node, bool $active): bool
     {
+        $stampChanged = $this->accounts->setField($node, 'sso_deprovisioned', '');
         $changed = $this->accounts->setDisabled($node, !$active);
-        if ($changed && !$active) {
+        if (!$active) {
             $username = (string)$node->name;
             $ended = SessionRegistry::destroyWhere(
                 fn(array $entry) => (string)($entry['username'] ?? '') === $username
@@ -487,7 +495,22 @@ final class ScimUsers
                 $ended
             ));
         }
-        return $changed;
+        return $changed || $stampChanged;
+    }
+
+    private function assertIfMatch(\SimpleXMLElement $node, string $header): void
+    {
+        $header = trim($header);
+        if ($header === '' || $header === '*') {
+            return;
+        }
+        $current = $this->toResource($node)['meta']['version'];
+        foreach (array_map('trim', explode(',', $header)) as $candidate) {
+            if ($candidate !== '' && hash_equals($current, $candidate)) {
+                return;
+            }
+        }
+        throw new ScimError(412, 'the resource has changed since the tag you presented');
     }
 
     private function displayName(array $payload): string

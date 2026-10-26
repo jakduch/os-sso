@@ -31,7 +31,7 @@ final class SourceGate
         }
         foreach ($cidrs as $cidr) {
             $cidr = trim((string)$cidr);
-            if ($cidr === '') {
+            if ($cidr === '' || !self::isValidNetwork($cidr)) {
                 continue;
             }
             if (strpos($cidr, '/') === false) {
@@ -67,4 +67,25 @@ final class SourceGate
         }
         return false;
     }
+
+
+	public static function isValidNetwork(string $network): bool
+	{
+		$parts = explode('/', trim($network));
+		$address = @inet_pton($parts[0]);
+		return $address !== false && (count($parts) === 1 || (
+			count($parts) === 2 && ctype_digit($parts[1]) && (int)$parts[1] <= strlen($address) * 8
+		));
+	}
+
+
+	public static function isValidList(string $value): bool
+	{
+		foreach (array_filter(array_map('trim', explode(',', $value)), 'strlen') as $network) {
+			if (!self::isValidNetwork($network)) {
+				return false;
+			}
+		}
+		return true;
+	}
 }

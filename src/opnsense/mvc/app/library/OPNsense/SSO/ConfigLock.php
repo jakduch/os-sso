@@ -38,8 +38,15 @@ final class ConfigLock
             if (!flock($fp, LOCK_EX)) {
                 throw new \RuntimeException('SSO: cannot acquire the config lock; refusing to proceed unserialized');
             }
-            Config::getInstance()->forceReload();
-            return $fn();
+            $config = Config::getInstance();
+            $config->forceReload();
+            // Share the core transaction lock with GUI and other plugin writes.
+            $config->lock();
+            try {
+                return $fn();
+            } finally {
+                $config->unlock();
+            }
         } finally {
             flock($fp, LOCK_UN);
             fclose($fp);

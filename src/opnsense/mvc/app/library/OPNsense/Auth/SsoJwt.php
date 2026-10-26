@@ -130,7 +130,8 @@ class SsoJwt extends Local implements IAuthConnector
                     . 'this must be that proxy IP, and that proxy must strip the JWT header from '
                     . 'untrusted clients.'),
                 'type' => 'text',
-                'validate' => fn($v) => !empty($v) ? [] : [gettext('At least one trusted proxy IP/CIDR is required.')],
+                'validate' => fn($v) => !empty($v) && \OPNsense\SSO\SourceGate::isValidList((string)$v)
+                    ? [] : [gettext('At least one valid trusted proxy IP/CIDR is required.')],
             ],
             'sso_jwt_header' => [
                 'name' => gettext('JWT header'),
@@ -290,6 +291,8 @@ class SsoJwt extends Local implements IAuthConnector
                     . 'every request rather than accepting any source. Matched on the direct TCP peer, never '
                     . 'on a forwardable header.'),
                 'type' => 'text',
+                'validate' => fn($v) => \OPNsense\SSO\SourceGate::isValidList((string)$v)
+                    ? [] : [gettext('Enter valid source IP addresses or CIDR networks.')],
             ],
             'sso_button_label' => [
                 'name' => gettext('Login button label'),
