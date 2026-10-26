@@ -84,6 +84,9 @@ Vagrant.configure("2") do |config|
   #   vagrant ssh -c 'cd /home/vagrant/os-sso && sudo php test/unit/run.php'
   config.vm.provision "file", run: "always",
     source: "unit", destination: "/home/vagrant/os-sso/test/unit"
+  # Native PHP session regression fixtures are launched by the unit suite.
+  config.vm.provision "file", run: "always",
+    source: "integration", destination: "/home/vagrant/os-sso/test/integration"
   # 6. deploy the plugin into the live OPNsense tree.
   config.vm.provision "shell", path: "vagrant/deploy.sh", run: "always"
 end

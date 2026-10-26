@@ -85,9 +85,7 @@ final class Deprovisioner
                 Config::getInstance()->save();
                 (new Backend())->configdpRun('auth user changed', [$username]);
 
-                $ended = SessionRegistry::destroyWhere(
-                    fn(array $entry) => (string)($entry['username'] ?? '') === $username
-                );
+                $ended = SessionRegistry::destroyForAccount($node);
                 syslog(LOG_WARNING, sprintf(
                     "os-sso: disabled local account '%s' (refused by %s), ended %d session(s)",
                     $username,

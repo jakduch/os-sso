@@ -154,8 +154,20 @@ namespace {
 		if (!$refused || isset($_SESSION['Username']) || session_status() === PHP_SESSION_ACTIVE) {
 			throw new RuntimeException('a stale pre-deactivation decision established a browser session');
 		}
+		// The VPN callback must also reload rather than trust the mapper's cache.
+		$config->object()->system->user[0]->disabled = '0';
+		$vpnRefused = false;
+		try {
+			\OPNsense\SSO\VpnAuthorizer::authorize(str_repeat('a', 32), 'alice', '192.0.2.1');
+		} catch (RuntimeException $error) {
+			$vpnRefused = str_contains($error->getMessage(), 'disabled or expired');
+		}
+		if (!$vpnRefused) {
+			throw new RuntimeException('a stale account decision reached the privileged VPN backend');
+		}
 		echo "Concurrent SSO/core transactions preserve both users, unique UIDs and the administrator change.\n";
 		echo "Session establishment rejects an account deactivated after the earlier provisioning decision.\n";
+		echo "VPN authorization also reloads and refuses that deactivated account before any privileged verdict.\n";
 	} finally {
 		if (is_resource($process)) {
 			proc_terminate($process);

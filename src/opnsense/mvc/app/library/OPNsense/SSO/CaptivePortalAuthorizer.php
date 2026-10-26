@@ -93,11 +93,16 @@ final class CaptivePortalAuthorizer
 
         $raw = (new Backend())->configdpRun('captiveportal allow', [$zoneId, $username, $ip, $providerName]);
         $session = json_decode((string)$raw, true);
-        // "allow" returns the new session (with sessionId) or, if the IP was already
-        // authorized, a clientState of AUTHORIZED. Anything else is a failure.
+        // Supported core versions return both an authorization acknowledgement
+        // and a new session ID, including when replacing an earlier login at this IP.
         $ok = is_array($session)
-            && (!empty($session['sessionId']) || ($session['clientState'] ?? '') === 'AUTHORIZED');
+            && ($session['clientState'] ?? '') === 'AUTHORIZED'
+            && is_string($session['sessionId'] ?? null)
+            && $session['sessionId'] !== '';
         if (!$ok) {
+            if (is_array($session) && is_string($session['sessionId'] ?? null) && $session['sessionId'] !== '') {
+                self::disconnect(['username' => $username, 'zone' => $zoneId, 'provider' => $providerName, 'session' => $session]);
+            }
             throw new \RuntimeException('captive portal authorization failed');
         }
 
@@ -181,6 +186,10 @@ final class CaptivePortalAuthorizer
      */
     public static function recordGrant(array $cpRes, array $idpSession): void
     {
+        $session = $cpRes['session']['sessionId'] ?? null;
+        if (!is_string($session) || $session === '') {
+            throw new \RuntimeException('captive portal grant has no revocable session ID');
+        }
         // Ours on the left: "+" keeps the left-hand key on a collision, and what this
         // record is FOR -- which zone, which portal session to end -- is not something a
         // caller's metadata should be able to overwrite.
@@ -188,12 +197,12 @@ final class CaptivePortalAuthorizer
             'kind' => SessionRegistry::PORTAL,
             'username' => (string)$cpRes['username'],
             'zone' => (string)$cpRes['zone'],
-            'cp_session' => (string)($cpRes['session']['sessionId'] ?? ''),
+            'cp_session' => $session,
         ] + $idpSession);
         if ($recorded) {
             return;
         }
-        self::disconnect($cpRes);
+        self::disconnect($cpRes + ['provider' => (string)($idpSession['provider'] ?? '')]);
         throw new \RuntimeException(
             'captive portal authorization was taken back: the grant could not be recorded, '
             . 'and an access nothing has a record of is one nothing can revoke'
@@ -213,7 +222,28 @@ final class CaptivePortalAuthorizer
             ));
             return;
         }
-        (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso: grant not recordable']);
+        // A contradictory allow response can still name a real network session.
+        // Keep a durable rollback intent before disconnecting whenever storage works.
+        $handle = SessionRegistry::createGrant([
+            'kind' => SessionRegistry::PORTAL,
+            'username' => (string)$cpRes['username'],
+            'provider' => (string)($cpRes['provider'] ?? ''),
+            'zone' => (string)($cpRes['zone'] ?? ''),
+            'cp_session' => $session,
+        ]);
+        if ($handle !== null) {
+            if (SessionRegistry::destroyById($handle) !== 1) {
+                throw new \RuntimeException('captive portal rollback was not acknowledged; retained for retry');
+            }
+            return;
+        }
+        // The original registry failure may also prevent storing a retry intent.
+        // Attempt the privileged disconnect directly and require its acknowledgement.
+        $raw = (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso: grant not recordable']);
+        $response = json_decode((string)$raw, true);
+        if (!is_array($response) || !is_string($response['terminateCause'] ?? null)) {
+            throw new \RuntimeException('captive portal rollback was not acknowledged');
+        }
         syslog(LOG_WARNING, sprintf(
             "os-sso cp: disconnected '%s' again -- the grant could not be recorded",
             (string)$cpRes['username']

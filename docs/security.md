@@ -178,3 +178,19 @@ OIDC logout tokens require typed `iat`, `exp`, `jti` and logout-event claims. Re
 markers cover the full accepted clock-skew window and are scoped by issuer and client.
 JWT single-use markers remain consumed while incomplete or corrupt; a concurrent
 request cannot sweep away another worker's unfinished marker.
+
+Final VPN approval reloads the local account under the core configuration lock and
+keeps that lock through grant persistence and the privileged verdict. A missing,
+disabled or expired account is refused before the VPN backend is called. An exception
+or uncertain verdict starts revocation immediately after releasing the configuration
+lock; failed disconnects remain pending. Local inspect/verdict calls use bounded
+10-second response and 3-second connect timeouts while the lock is held.
+SCIM and automatic deprovisioning revoke grants by their recorded local UID, including
+portal identities whose IdP username differs from the local account name. Older grants
+retain the name-based fallback. Captive-portal replies must include both AUTHORIZED and
+a non-empty string session ID; a state-only response is not a revocable grant.
+
+A contradictory portal reply that still identifies a session creates a rollback intent
+before attempting to disconnect it. A failed disconnect remains pending for the
+sweeper; it is not logged as successful. When the session registry itself is unavailable,
+the plugin attempts a direct disconnect and reports any missing acknowledgement.

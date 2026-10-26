@@ -322,6 +322,28 @@ final class SessionRegistry
         });
     }
 
+	/** Revokes every grant attached to this local account, including IdP username aliases. */
+	public static function destroyForAccount(\SimpleXMLElement $account): int
+	{
+		$uid = (string)($account->uid ?? '');
+		$username = (string)($account->name ?? '');
+		if ($uid === '' && $username === '') {
+			return 0;
+		}
+		return self::destroyWhere(function (array $entry) use ($uid, $username): bool {
+			$recordedUid = (string)($entry['account_uid'] ?? '');
+			if ($recordedUid !== '') {
+				return $uid !== '' && hash_equals($recordedUid, $uid);
+			}
+			// Compatibility with grants recorded before local account references.
+			return $username !== '' && (
+				(string)($entry['username'] ?? '') === $username
+				|| (string)($entry['account_name'] ?? '') === $username
+			);
+		});
+	}
+
+
     /**
      * End the sessions of one IdP subject -- what a back-channel logout asks for.
      * Matching on the IdP session id when the logout token carries one, otherwise on
