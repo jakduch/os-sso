@@ -48,6 +48,15 @@ namespace {
 		return $config;
 	}
 
+	if (($argv[2] ?? '') === 'disable-user') {
+		$config = fixtureConfig($argv[3]);
+		$config->lock();
+		$config->object()->system->user[0]->disabled = '1';
+		$config->save(null, false);
+		$config->unlock();
+		exit(0);
+	}
+
 	if (($argv[2] ?? '') === 'core-writer') {
 		$config = fixtureConfig($argv[3]);
 		touch($argv[4]);
@@ -110,7 +119,43 @@ namespace {
 		if ($status !== 0 || $users !== ['alice' => '2000', 'bob' => '2001'] || (string)$result->system->hostname !== 'administrator-change') {
 			throw new RuntimeException('core transaction was lost or UIDs collided: ' . json_encode($users) . ' ' . $output);
 		}
+		// The mapper may have read an enabled account just before another worker
+		// disables it. Establishment must reload and refuse this stale decision.
+		$process = proc_open([PHP_BINARY, __FILE__, $coreSource, 'disable-user', $path], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+		if (!is_resource($process)) {
+			throw new RuntimeException('cannot start concurrent account deactivation');
+		}
+		fclose($pipes[0]);
+		$output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+		fclose($pipes[1]);
+		fclose($pipes[2]);
+		if (proc_close($process) !== 0) {
+			throw new RuntimeException('account deactivation failed: ' . $output);
+		}
+		$process = null;
+		if ((string)$config->object()->system->user[0]->disabled === '1') {
+			throw new RuntimeException('the stale account fixture unexpectedly refreshed itself');
+		}
+		spl_autoload_register(function (string $class) use ($root): void {
+			$file = $root . '/src/opnsense/mvc/app/library/' . str_replace('\\', '/', $class) . '.php';
+			if (str_starts_with($class, 'OPNsense\\') && is_file($file)) {
+				require $file;
+			}
+		});
+		ini_set('session.use_cookies', '0');
+		session_save_path($temporary);
+		session_start();
+		$refused = false;
+		try {
+			(new \OPNsense\SSO\SessionEstablisher())->establish('alice', 'fixture');
+		} catch (RuntimeException $error) {
+			$refused = str_contains($error->getMessage(), 'disabled or expired');
+		}
+		if (!$refused || isset($_SESSION['Username']) || session_status() === PHP_SESSION_ACTIVE) {
+			throw new RuntimeException('a stale pre-deactivation decision established a browser session');
+		}
 		echo "Concurrent SSO/core transactions preserve both users, unique UIDs and the administrator change.\n";
+		echo "Session establishment rejects an account deactivated after the earlier provisioning decision.\n";
 	} finally {
 		if (is_resource($process)) {
 			proc_terminate($process);

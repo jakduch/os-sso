@@ -100,7 +100,7 @@ proxy or port-forward; the form shows the exact redirect/ACS URL to copy into th
 A back-channel logout, a SAML Single Logout, a SCIM `active: false`, "deprovision on
 refused login" and the *End* button on the diagnostics page all act on the same record of
 what os-sso granted - so they end the WebGUI session, disconnect the captive-portal client
-from the network, and drop the OpenVPN tunnels of that common name, rather than only the
+from the network, and drop the OpenVPN tunnels of that client username, rather than only the
 first of the three.
 
 A deprovisioning is also **undone** by the login that disproves it: put the account back
@@ -124,8 +124,8 @@ instance is stopped if the directive disappears or another password verifier app
 alongside it; it is restarted only after its own authentication settings validate. The configuration
 event is asynchronous, so the guard is a periodic mitigation, not a synchronous pre-start
 barrier. New VPN logins fail when
-the IdP is unavailable. Existing tunnels can continue with a still-valid OpenVPN auth token
-until their recorded os-sso session is revoked or reaches its configured maximum lifetime.
+the IdP is unavailable. Existing tunnels remain subject to the recorded session lifetime and revocation.
+Managed SSO instances refuse native OpenVPN authentication tokens, as described below.
 
 [SCIM](scim.md) needs a bearer token **and** a source-address allowlist, and refuses on the
 same principles as the login path.
@@ -156,3 +156,25 @@ without consulting the SSO hook on reconnect. A configured token lifetime, inclu
 `0`, blocks profile application and keeps the instance stopped during guard repair.
 Manually wired instances must omit this directive as well. Revocation sends the
 `AUTH_FAILED` control message rather than requesting an automatic client restart.
+
+## Browser session and logout lifecycle
+
+WebGUI authentication requires an active native PHP file session, successful session-ID
+rotation and a durable registry entry. Failure destroys the pending browser session.
+The final account check and registry write run under the OPNsense configuration lock,
+so an earlier provisioning decision cannot override a concurrent account deactivation.
+PHP session directories configured as `N;[MODE;]/path` retain their native layout.
+
+New grants pin an existing local account by UID, name and, where present, its UUID.
+Removal, rename or replacement ends that grant at the next sweep. Portal guests who
+never had a local account remain supported. Older WebGUI and VPN grants still require
+their named account; legacy portal grants lack enough information to distinguish an
+already-removed account from an accountless guest and retain their original expiry.
+
+Validated logout messages are restricted to their configured provider and to every
+subject/session identifier supplied. SAML front-channel logout also checks the current
+browser's authentication method, provider, NameID and supplied SessionIndexes.
+OIDC logout tokens require typed `iat`, `exp`, `jti` and logout-event claims. Replay
+markers cover the full accepted clock-skew window and are scoped by issuer and client.
+JWT single-use markers remain consumed while incomplete or corrupt; a concurrent
+request cannot sweep away another worker's unfinished marker.

@@ -93,3 +93,16 @@ falsy(str_contains($escaped, '<script>'), 'the action is escaped into the markup
 $_SERVER = [];
 $_POST = [];
 $_SESSION = [];
+
+T::group('SAML logout cannot destroy another provider or authentication method');
+$samlSession = ['type' => 'saml', 'provider' => 'one', 'nameid' => 'alice'];
+truthy(LogoutGuard::matchesSamlSession($samlSession, 'one', 'alice'), 'a named logout matches its provider and subject');
+truthy(LogoutGuard::matchesSamlSession($samlSession, 'one', ''), 'a correlated response can end its own provider session');
+falsy(LogoutGuard::matchesSamlSession($samlSession, 'two', 'alice'), 'the same NameID at another provider is a different context');
+falsy(LogoutGuard::matchesSamlSession($samlSession, 'one', 'bob'), 'another NameID cannot end this browser session');
+falsy(LogoutGuard::matchesSamlSession(['type' => 'oidc', 'provider' => 'one'], 'one', 'alice'), 'an OIDC browser session is not a SAML logout target');
+falsy(LogoutGuard::matchesSamlSession([], 'one', 'alice'), 'a local browser session with no SAML binding is not a target');
+
+$samlSession['sessionindex'] = 'current-session';
+truthy(LogoutGuard::matchesSamlSession($samlSession, 'one', 'alice', ['current-session']), 'a matching SessionIndex targets this browser');
+falsy(LogoutGuard::matchesSamlSession($samlSession, 'one', 'alice', ['another-session']), 'a different SessionIndex preserves this browser');
