@@ -223,3 +223,27 @@ if ($manifestPath === false) {
 		unlink($manifestPath);
 	}
 }
+
+T::group('OpenVpnIntegration: invalid selections remain in the guard manifest');
+
+if (!stateDirUsable()) {
+	T::skip('partial reconciliation publishes every selected instance', 'state directory unavailable');
+} else {
+	$tree = vpnTree(
+		[vpnProfile('staff'), vpnProfile('contractors', VPN_UUID_B), vpnProfile('conflict', VPN_UUID_B)],
+		[vpnInstance(VPN_UUID_A), vpnInstance(VPN_UUID_B)],
+	);
+	\OPNsense\Core\Config::useTree($tree);
+	$manifestPath = tempnam(sys_get_temp_dir(), 'os-sso-partial-manifest-');
+	try {
+		$result = OpenVpnIntegration::synchronize($manifestPath);
+		$manifest = json_decode((string)file_get_contents($manifestPath), true);
+		truthy($result['changed'], 'the independent valid instance is reconciled');
+		truthy($result['errors'] !== [], 'the conflicting selection is reported');
+		eq('staff', $manifest['instances'][VPN_UUID_A]['profile'], 'the valid instance remains guarded');
+		eq('1', $manifest['instances'][VPN_UUID_B]['blocked'], 'the conflicting instance is guarded and cannot be restarted by the supervisor');
+		eq(['float'], vpnFlags($tree, VPN_UUID_B), 'the conflicting instance remains untouched');
+	} finally {
+		unlink($manifestPath);
+	}
+}

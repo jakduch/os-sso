@@ -119,9 +119,11 @@ The local password (+ native TOTP) always stays active as a **break-glass** path
 least one local admin.
 
 For a managed OpenVPN profile, os-sso owns the instance's deferred-auth directive and a
-supervised guard verifies the saved and generated configuration continuously. A managed
+supervised guard verifies the saved and generated configuration once per second. A managed
 instance is stopped if the directive disappears or another password verifier appears
-alongside it; it is restarted only after reconciliation succeeds. New VPN logins fail when
+alongside it; it is restarted only after its own authentication settings validate. The configuration
+event is asynchronous, so the guard is a periodic mitigation, not a synchronous pre-start
+barrier. New VPN logins fail when
 the IdP is unavailable. Existing tunnels can continue with a still-valid OpenVPN auth token
 until their recorded os-sso session is revoked or reaches its configured maximum lifetime.
 

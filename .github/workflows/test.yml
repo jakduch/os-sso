@@ -46,7 +46,7 @@ jobs:
             repository/bootstrap.sh repository/reinstall.sh tools/extract-strings.sh \
             test/package_scripts.sh test/repository_scripts.sh \
             src/opnsense/scripts/OPNsense/SSO/*.sh \
-            src/etc/rc.d/os-sso-vpn-guard
+            src/etc/rc.d/os-sso-vpn-guard src/etc/rc.syshook.d/config/50-sso-openvpn
           sh test/package_scripts.sh
           sh test/repository_scripts.sh
 
