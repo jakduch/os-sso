@@ -65,6 +65,12 @@ class Settings extends BaseModel
 						$field,
 					));
 				}
+				if ((string)$instance->{'auth-gen-token'} !== '') {
+					$messages->appendMessage(new Message(
+						gettext('Clear Auth Token Lifetime on every selected OpenVPN instance; tokens bypass SSO revocation.'),
+						$field,
+					));
+				}
 				if (!$instance->authmode->isEmpty()) {
 					$messages->appendMessage(new Message(
 						gettext('Clear Authentication on every selected OpenVPN instance; os-sso supplies its authentication hook.'),

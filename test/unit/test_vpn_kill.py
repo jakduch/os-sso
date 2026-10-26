@@ -34,7 +34,7 @@ class KillResultTest(unittest.TestCase):
     def test_uses_username_when_certificate_name_differs(self):
         result, commands = self.call('alice', status(('device-42', 'alice', '17')), SUCCESS)
         self.assertEqual(1, result)
-        self.assertEqual([b'status 3\n', b'client-kill 17\n'], commands)
+        self.assertEqual([b'status 3\n', b'client-kill 17 AUTH_FAILED\n'], commands)
 
     def test_does_not_kill_another_user_with_matching_certificate_name(self):
         result, commands = self.call('alice', status(('alice', 'bob', '18')))
@@ -44,7 +44,7 @@ class KillResultTest(unittest.TestCase):
     def test_username_with_spaces_is_not_truncated(self):
         result, commands = self.call('Alice Smith', status(('device', 'Alice Smith', '19')), SUCCESS)
         self.assertEqual(1, result)
-        self.assertEqual(b'client-kill 19\n', commands[-1])
+        self.assertEqual(b'client-kill 19 AUTH_FAILED\n', commands[-1])
 
     def test_absent_client_is_already_revoked(self):
         self.assertEqual(0, self.call('alice', status())[0])
@@ -52,7 +52,7 @@ class KillResultTest(unittest.TestCase):
     def test_all_matching_tunnels_are_killed(self):
         result, commands = self.call('alice', status(('a', 'alice', '2'), ('b', 'alice', '1')), SUCCESS, SUCCESS)
         self.assertEqual(2, result)
-        self.assertEqual([b'status 3\n', b'client-kill 1\n', b'client-kill 2\n'], commands)
+        self.assertEqual([b'status 3\n', b'client-kill 1 AUTH_FAILED\n', b'client-kill 2 AUTH_FAILED\n'], commands)
 
     def test_fragmented_status_and_acknowledgement(self):
         response = status(('device', 'alice', '123')) + SUCCESS

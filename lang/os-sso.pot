@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: os-sso\n"
 "Report-Msgid-Bugs-To: https://github.com/jakduch/os-sso/issues\n"
-"POT-Creation-Date: 2026-10-26 18:13+0100\n"
+"POT-Creation-Date: 2026-10-26 18:30+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1069,11 +1069,11 @@ msgstr ""
 msgid "Continue to the identity provider"
 msgstr ""
 
-#: src/opnsense/mvc/app/library/OPNsense/SSO/VpnAuthorizer.php:73
+#: src/opnsense/mvc/app/library/OPNsense/SSO/VpnAuthorizer.php:71
 msgid "VPN authorized"
 msgstr ""
 
-#: src/opnsense/mvc/app/library/OPNsense/SSO/VpnAuthorizer.php:75
+#: src/opnsense/mvc/app/library/OPNsense/SSO/VpnAuthorizer.php:73
 #, php-format
 msgid ""
 "Signed in as %s. You can close this window and return to your VPN client."
@@ -1093,6 +1093,12 @@ msgid "Select enabled OpenVPN server instances only."
 msgstr ""
 
 #: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:70
+msgid ""
+"Clear Auth Token Lifetime on every selected OpenVPN instance; tokens bypass "
+"SSO revocation."
+msgstr ""
+
+#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:76
 msgid ""
 "Clear Authentication on every selected OpenVPN instance; os-sso supplies its "
 "authentication hook."

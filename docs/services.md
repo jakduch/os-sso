@@ -71,15 +71,18 @@ independent factors: a device certificate and the browser login (including the I
 passkey). os-sso also adds `auth-user-pass-optional`, so a web-auth-capable client need not
 send a reusable password.
 
-Set **Auth Token Lifetime** on the OpenVPN instance if an established client should pass an
-OpenVPN-generated token on later TLS renegotiations instead of opening the browser again.
-The token is checked locally by OpenVPN; Keycloak logout, SCIM deactivation and the os-sso
-maximum session lifetime can still terminate the recorded tunnel. In an HA pair, use the
-same **Auth Token secret** on both nodes if tokens must survive a failover.
+Leave **Auth Token Lifetime** empty on SSO-managed instances. OpenVPN-generated
+`auth-gen-token` credentials can reconnect without calling the SSO hook, so disconnecting
+a revoked account cannot prevent its token from reopening access. The profile validator,
+reconciler and runtime guard refuse this combination, including a lifetime of `0`
+(which means an unlimited token lifetime). The guard stops an affected managed instance
+and leaves it stopped until the token setting is cleared. TLS renegotiation therefore
+uses browser authentication again.
 
 ### Existing manually wired profiles
 
-Profiles created before managed instances were introduced keep their instance field empty
+Manually wired instances must also omit `auth-gen-token`; they are outside the managed
+runtime guard. Profiles created before managed instances were introduced keep their instance field empty
 and continue to use their existing manual directive:
 
 ```text

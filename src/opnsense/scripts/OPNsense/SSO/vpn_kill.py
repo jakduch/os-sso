@@ -90,7 +90,7 @@ def kill_on(socket_path, username):
             clients = client_ids(reader, username)
             killed = 0
             for client in clients:
-                sock.sendall(('client-kill %s\n' % client).encode('ascii'))
+                sock.sendall(('client-kill %s AUTH_FAILED\n' % client).encode('ascii'))
                 while True:
                     answer = reader.line()
                     if not answer.startswith('>'):
