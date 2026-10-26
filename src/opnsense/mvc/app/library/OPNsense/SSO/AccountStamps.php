@@ -31,6 +31,10 @@ use OPNsense\Core\Config;
  */
 final class AccountStamps
 {
+    private static ?\SimpleXMLElement $indexedRoot = null;
+    /** @var array<string, \SimpleXMLElement> */
+    private static array $records = [];
+
     public const FIELDS = [
         'sso_owned',
         'sso_subject',
@@ -237,6 +241,8 @@ final class AccountStamps
                 $removed++;
             }
         }
+        self::$indexedRoot = null;
+        self::$records = [];
         return $removed;
     }
 
@@ -271,12 +277,15 @@ final class AccountStamps
         // isset(), not ??: SimpleXML hands back an empty element, never null, for a
         // child that does not exist.
         $cfg = Config::getInstance()->object();
-        if (isset($cfg->OPNsense->SSO->accounts)) {
-            foreach ($cfg->OPNsense->SSO->accounts->account as $account) {
-                if ((string)$account['uid'] === $uid) {
-                    return $account;
-                }
+        if (self::$indexedRoot !== $cfg) {
+            self::$indexedRoot = $cfg;
+            self::$records = [];
+            foreach ($cfg->OPNsense->SSO->accounts->account ?? [] as $account) {
+                self::$records[(string)$account['uid']] ??= $account;
             }
+        }
+        if (isset(self::$records[$uid])) {
+            return self::$records[$uid];
         }
         if (!$create) {
             return null;
@@ -286,6 +295,7 @@ final class AccountStamps
         $accounts = isset($sso->accounts) ? $sso->accounts : $sso->addChild('accounts');
         $account = $accounts->addChild('account');
         $account->addAttribute('uid', $uid);
+        self::$records[$uid] = $account;
         return $account;
     }
 

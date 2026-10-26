@@ -55,6 +55,21 @@ class Config
         return true;
     }
 
+    public static int $locks = 0;
+    public static int $unlocks = 0;
+
+    public function lock()
+    {
+        self::$locks++;
+        return $this;
+    }
+
+    public function unlock()
+    {
+        self::$unlocks++;
+        return $this;
+    }
+
     public function forceReload()
     {
         self::$reloads++;
@@ -65,13 +80,30 @@ class Backend
 {
     /** @var array<int,array{0:string,1:array}> every configd call the code made */
     public static array $calls = [];
+    public static array $responses = [];
+    public static ?\Closure $observer = null;
 
     public function configdpRun($action, $params = [], $detach = false)
     {
         self::$calls[] = [(string)$action, (array)$params];
+        if (self::$observer !== null) {
+            (self::$observer)((string)$action, (array)$params);
+        }
+        if (array_key_exists((string)$action, self::$responses)) {
+            return self::$responses[(string)$action];
+        }
+        if (str_contains((string)$action, 'vpn_inspect')) {
+            return 'ok ' . (string)($params[2] ?? '');
+        }
+        if (str_contains((string)$action, 'vpn_kill')) {
+            return '{"status":"ok","killed":1}';
+        }
+        if (str_contains((string)$action, 'captiveportal disconnect')) {
+            return '{"terminateCause":"os-sso revocation"}';
+        }
         // The two actions whose output the caller inspects.
         if (str_contains((string)$action, 'vpn_verdict')) {
-            return 'ok';
+            return 'ok ' . (string)($params[3] ?? '');
         }
         if (str_contains((string)$action, 'captiveportal allow')) {
             return '{"sessionId":"cp-session-1","clientState":"AUTHORIZED"}';

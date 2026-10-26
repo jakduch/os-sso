@@ -38,12 +38,12 @@ def kill_on(socket_path, common_name):
             sock.send(('kill %s\n' % common_name).encode())
             answer = sock.recv(4096).decode(errors='replace')
     except (OSError, socket.timeout):
-        return 0
+        return None
     # "SUCCESS: common name 'x' found, 1 client(s) killed"
     if 'SUCCESS' not in answer:
-        return 0
-    numbers = [int(word) for word in re.findall(r'\d+', answer)]
-    return numbers[0] if numbers else 1
+        return 0 if 'not found' in answer.lower() else None
+    count = re.search(r'(\d+) client', answer)
+    return int(count.group(1)) if count else 1
 
 
 if __name__ == '__main__':
@@ -55,8 +55,14 @@ if __name__ == '__main__':
         sys.exit(1)
 
     killed = 0
+    failures = 0
     sockets = sorted(glob.glob(SOCKET_GLOB))
     for path in sockets:
         if os.path.exists(path):
-            killed += kill_on(path, name)
-    print(json.dumps({'status': 'ok', 'killed': killed, 'instances': len(sockets)}))
+            result = kill_on(path, name)
+            if result is None:
+                failures += 1
+            else:
+                killed += result
+    print(json.dumps({'status': 'error' if failures else 'ok', 'killed': killed, 'instances': len(sockets), 'failures': failures}))
+    sys.exit(1 if failures else 0)

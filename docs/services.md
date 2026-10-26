@@ -108,6 +108,11 @@ Detection is periodic, not a synchronous pre-start barrier. A restart racing a c
 event can run until the next guard check; the guard prevents that configuration from
 remaining active unnoticed. Keep client-certificate verification enabled.
 
+VPN clients must provide a non-empty username even when username matching is disabled:
+the plugin needs a named grant it can revoke. A read-only inspection validates the pending
+attempt, then the session registry is written before OpenVPN receives approval. An
+unwritable registry refuses the new tunnel instead of creating untracked access.
+
 > **Mind the username.** OpenVPN takes it from the client and never revisits it on a
 > deferred-auth path: the browser login decides *whether* the tunnel comes up, not *whose*
 > it is. **Require the username to match** is therefore enabled by default and refuses

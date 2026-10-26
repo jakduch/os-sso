@@ -112,16 +112,13 @@ class ScimController extends ApiControllerBase
                     return $resource;
                 case 'PUT':
                     $this->requireResource($id);
-                    $this->assertIfMatch($users, $id);
-                    return $this->tagged($users->replace($id, $this->body()));
+                    return $this->tagged($users->replace($id, $this->body(), (string)($_SERVER['HTTP_IF_MATCH'] ?? '')));
                 case 'PATCH':
                     $this->requireResource($id);
-                    $this->assertIfMatch($users, $id);
-                    return $this->tagged($users->patch($id, $this->operations()));
+                    return $this->tagged($users->patch($id, $this->operations(), (string)($_SERVER['HTTP_IF_MATCH'] ?? '')));
                 case 'DELETE':
                     $this->requireResource($id);
-                    $this->assertIfMatch($users, $id);
-                    $users->deactivate($id);
+                    $users->deactivate($id, (string)($_SERVER['HTTP_IF_MATCH'] ?? ''));
                     $this->response->setStatusCode(204, 'No Content');
                     return null;
                 default:
@@ -199,28 +196,6 @@ class ScimController extends ApiControllerBase
             $this->response->setHeader('ETag', $version);
         }
         return $resource;
-    }
-
-    /**
-     * Honour a conditional write.
-     *
-     * "*" means "as long as it exists", which requireNode() has already answered by
-     * throwing 404 if it does not. A tag that no longer matches is a 412: the client
-     * re-reads and decides, rather than overwriting a change it never saw.
-     */
-    private function assertIfMatch(ScimUsers $users, string $id): void
-    {
-        $header = trim((string)($_SERVER['HTTP_IF_MATCH'] ?? ''));
-        if ($header === '' || $header === '*') {
-            return;
-        }
-        $current = (string)($users->get($id)['meta']['version'] ?? '');
-        foreach (array_map('trim', explode(',', $header)) as $candidate) {
-            if ($candidate !== '' && hash_equals($current, $candidate)) {
-                return;
-            }
-        }
-        throw new ScimError(412, 'the resource has changed since the tag you presented');
     }
 
     private function render(array $document): string

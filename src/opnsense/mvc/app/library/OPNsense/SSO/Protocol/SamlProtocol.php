@@ -185,7 +185,7 @@ final class SamlProtocol implements ProtocolInterface
         // single-use InResponseTo stops post-consumption replay; this additionally
         // closes the window where an attacker replays the response before the
         // victim's browser delivers it.
-        $this->guardAssertionReplay((string) $auth->getLastAssertionId());
+        $this->guardAssertionReplay((string) $auth->getLastAssertionId(), (int) $auth->getLastAssertionNotOnOrAfter());
         $this->assertStrongSignature((string) $auth->getLastResponseXML());
         $this->assertAuthnAge($auth);
         $this->assertAuthnContext((string) $auth->getLastResponseXML());
@@ -739,19 +739,24 @@ final class SamlProtocol implements ProtocolInterface
     /**
      * Refuse a SAML assertion ID already accepted within the replay window.
      * php-saml keeps no replay cache of its own. Keyed by the (verified) assertion
-     * ID; the window reuses STATE_TTL and the markers are swept by sweepStale().
-     * Expired assertions are already rejected by php-saml (NotOnOrAfter), so this
-     * only needs to cover the live window.
+     * ID; retain it through SubjectConfirmation expiry plus clock tolerance.
+     * Login-request state has a shorter TTL and must not shorten replay protection.
      */
-    private function guardAssertionReplay(string $assertionId): void
+    private function guardAssertionReplay(string $assertionId, int $expiresAt): void
     {
         if ($assertionId === "") {
             return; // nothing to key on; single-use InResponseTo still applies
         }
+        if ($expiresAt <= 0) {
+            throw new \RuntimeException('SAML: assertion has no bounded SubjectConfirmation lifetime');
+        }
         $file = self::stateDir() . "/seen-" . hash("sha256", $assertionId) . ".json";
         // Drop a stale marker so a long-since-expired ID does not block forever.
-        if (is_file($file) && time() - (int) @filemtime($file) > self::STATE_TTL) {
-            @unlink($file);
+        if (is_file($file)) {
+            $marker = json_decode((string)file_get_contents($file), true);
+            if (isset($marker['expires_at']) && (int)$marker['expires_at'] <= time()) {
+                @unlink($file);
+            }
         }
         // Exclusive create: succeeds exactly once per assertion ID in the window;
         // a concurrent or later replay fails the open and is rejected.
@@ -759,7 +764,7 @@ final class SamlProtocol implements ProtocolInterface
         if ($fp === false) {
             throw new \RuntimeException("SAML: assertion replay detected");
         }
-        fwrite($fp, json_encode(["ts" => time()]));
+        fwrite($fp, json_encode(["expires_at" => max(time() + self::STATE_TTL, $expiresAt + self::CLOCK_SKEW)]));
         fclose($fp);
         @chmod($file, 0600);
     }
@@ -779,6 +784,14 @@ final class SamlProtocol implements ProtocolInterface
     private function sweepStale(): void
     {
         foreach (glob(self::stateDir() . '/*.json') ?: [] as $f) {
+            if (str_starts_with(basename($f), 'seen-')) {
+                $marker = json_decode((string)file_get_contents($f), true);
+                // Legacy markers have no expiry: retaining them cannot permit a replay.
+                if (isset($marker['expires_at']) && (int)$marker['expires_at'] <= time()) {
+                    @unlink($f);
+                }
+                continue;
+            }
             if ((time() - (int) @filemtime($f)) > self::STATE_TTL) {
                 @unlink($f);
             }

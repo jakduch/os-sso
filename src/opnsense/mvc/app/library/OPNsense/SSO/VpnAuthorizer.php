@@ -28,7 +28,7 @@ final class VpnAuthorizer
      *         ('' when the client sent none)
      * @throws \RuntimeException on an unknown session, ip mismatch, or failed write
      */
-    public static function authorize(string $vpn, string $username, string $browserIp): string
+    public static function authorize(string $vpn, string $username, string $browserIp, array $idpSession = []): string
     {
         $sid = preg_replace('/[^a-f0-9]/', '', $vpn);
         if ($sid === '') {
@@ -40,15 +40,30 @@ final class VpnAuthorizer
         // operator enabled that. Reduced to the local-account charset: this crosses
         // configd into a positional shell argument.
         $user = preg_replace('/[^A-Za-z0-9._\- ]/', '', $username);
-        $out = trim((string)(new Backend())->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user]));
-        // "ok", or "ok <common name>" when the client sent a username -- which is what
-        // OpenVPN goes on using, and therefore what a revocation has to kill.
-        $parts = explode(' ', $out, 2);
-        if (($parts[0] ?? '') !== 'ok') {
+        $backend = new Backend();
+        $inspect = trim((string)$backend->configdpRun('sso vpn_inspect', [$sid, $ip, $user]));
+        $parts = explode(' ', $inspect, 2);
+        $commonName = trim($parts[1] ?? '');
+        if (($parts[0] ?? '') !== 'ok' || $commonName === '') {
+            throw new \RuntimeException('VPN session cannot be inspected for revocation: ' . $inspect);
+        }
+        // Persist a revocable grant BEFORE writing a positive OpenVPN verdict.
+        $handle = SessionRegistry::createGrant([
+            'kind' => SessionRegistry::VPN,
+            'username' => $username,
+            'vpn_cn' => $commonName,
+        ] + $idpSession);
+        if ($handle === null) {
+            throw new \RuntimeException('VPN authorization refused: the grant could not be recorded');
+        }
+        $out = trim((string)$backend->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user]));
+        if ($out !== $inspect) {
+            // An uncertain verdict may already have granted access; retain failed revocations.
+            SessionRegistry::destroyById($handle);
             throw new \RuntimeException('VPN authorization failed: ' . $out);
         }
         syslog(LOG_NOTICE, sprintf("os-sso vpn: authorized tunnel for '%s' from %s", $username, $ip));
-        return trim($parts[1] ?? '');
+        return $commonName;
     }
 
     /** Minimal "close this window" page shown to the VPN client's browser. */

@@ -129,3 +129,19 @@ until their recorded os-sso session is revoked or reaches its configured maximum
 
 [SCIM](scim.md) needs a bearer token **and** a source-address allowlist, and refuses on the
 same principles as the login path.
+
+## Configuration transactions and revocation failures
+
+SSO provisioning and SCIM writes take the same configuration transaction lock as core
+GUI writes. Conditional SCIM updates check their entity tag under that lock, and an
+explicit SCIM activation/deactivation clears any earlier automatic-revival marker.
+
+A failed VPN or captive-portal disconnect keeps its registry entry marked for retry.
+The next session sweep retries it even if its original lifetime has not expired; the
+scheduled sweep runs every ten minutes, and successful SSO logins also trigger it.
+The recorded count includes acknowledged revocations only. VPN grants must be persisted
+before a positive deferred-auth verdict is sent.
+
+SAML assertion replay markers last through the signed SubjectConfirmation expiry plus
+clock tolerance. The shorter login-request TTL does not limit replay protection. Legacy
+markers without an expiry remain retained rather than being discarded unsafely.

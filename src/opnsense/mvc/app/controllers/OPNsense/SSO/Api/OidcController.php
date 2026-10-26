@@ -195,15 +195,11 @@ class OidcController extends ApiControllerBase
             // OpenVPN deferred web-auth path: authorize the tunnel, do NOT open a
             // WebGUI admin session (different security context).
             if ($vpn !== '') {
-                $commonName = VpnAuthorizer::authorize($vpn, $username, (string)($_SERVER['REMOTE_ADDR'] ?? ''));
-                SessionRegistry::recordGrant([
-                    'kind' => SessionRegistry::VPN,
-                    'username' => $username,
+                VpnAuthorizer::authorize($vpn, $username, (string)($_SERVER['REMOTE_ADDR'] ?? ''), [
                     'provider' => (string)$provider,
                     'issuer' => $protocol->getIssuer(),
                     'sub' => $identity->subject,
                     'sid' => $protocol->getLastSessionId(),
-                    'vpn_cn' => $commonName,
                     'lifetime' => (int)$auth->ssoSessionLifetime,
                 ]);
                 session_write_close();

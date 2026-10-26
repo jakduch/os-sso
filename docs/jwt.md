@@ -29,3 +29,6 @@ tokens:
 - **Single-use tokens** - accept each token once (keyed on `jti` when present). Only if
   the proxy mints a fresh token per login; if it reuses one token for the whole session
   (the usual oauth2-proxy setup), the second login would be refused.
+
+PS256 verification is included through the locked `phpseclib/phpseclib` dependency.
+Source allowlists reject malformed CIDR prefixes instead of treating them as `/0`.
