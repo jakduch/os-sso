@@ -28,6 +28,17 @@ final class VpnAuthorizer
      */
     public static function authorize(string $vpn, string $username, string $browserIp, array $idpSession = []): string
     {
+		return ConfigLock::with(fn(): string => self::authorizeLocked($vpn, $username, $browserIp, $idpSession));
+	}
+
+
+	private static function authorizeLocked(string $vpn, string $username, string $browserIp, array $idpSession): string
+	{
+		$account = (new LocalAccountWriter())->findByName($username);
+		if ($account === null) {
+			throw new \RuntimeException('VPN authorization refused: local account is missing');
+		}
+		LocalAccount::assertUsable($account);
         $sid = preg_replace('/[^a-f0-9]/', '', $vpn);
         if ($sid === '') {
             throw new \RuntimeException('invalid VPN session');
@@ -54,12 +65,17 @@ final class VpnAuthorizer
         if ($handle === null) {
             throw new \RuntimeException('VPN authorization refused: the grant could not be recorded');
         }
-        $out = rtrim((string)$backend->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user]), "\r\n");
-        if ($out !== $inspect) {
-            // An uncertain verdict may already have granted access; retain failed revocations.
-            SessionRegistry::destroyById($handle);
-            throw new \RuntimeException('VPN authorization failed: ' . $out);
-        }
+		try {
+			$out = rtrim((string)$backend->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user]), "\r\n");
+			if ($out !== $inspect) {
+				throw new \RuntimeException('VPN authorization failed: ' . $out);
+			}
+		} catch (\Throwable $error) {
+			// A failed or uncertain response must undo any access already granted.
+			// Failed disconnects remain recorded for retry by the registry.
+			SessionRegistry::destroyById($handle);
+			throw $error;
+		}
         syslog(LOG_NOTICE, sprintf("os-sso vpn: authorized tunnel for '%s' from %s", $username, $ip));
         return $clientUsername;
     }

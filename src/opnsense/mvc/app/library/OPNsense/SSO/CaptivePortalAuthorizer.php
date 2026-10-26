@@ -93,10 +93,12 @@ final class CaptivePortalAuthorizer
 
         $raw = (new Backend())->configdpRun('captiveportal allow', [$zoneId, $username, $ip, $providerName]);
         $session = json_decode((string)$raw, true);
-        // "allow" returns the new session (with sessionId) or, if the IP was already
-        // authorized, a clientState of AUTHORIZED. Anything else is a failure.
+        // Supported core versions return both an authorization acknowledgement
+        // and a new session ID, including when replacing an earlier login at this IP.
         $ok = is_array($session)
-            && (!empty($session['sessionId']) || ($session['clientState'] ?? '') === 'AUTHORIZED');
+            && ($session['clientState'] ?? '') === 'AUTHORIZED'
+            && is_string($session['sessionId'] ?? null)
+            && $session['sessionId'] !== '';
         if (!$ok) {
             throw new \RuntimeException('captive portal authorization failed');
         }
@@ -181,6 +183,10 @@ final class CaptivePortalAuthorizer
      */
     public static function recordGrant(array $cpRes, array $idpSession): void
     {
+        $session = $cpRes['session']['sessionId'] ?? null;
+        if (!is_string($session) || $session === '') {
+            throw new \RuntimeException('captive portal grant has no revocable session ID');
+        }
         // Ours on the left: "+" keeps the left-hand key on a collision, and what this
         // record is FOR -- which zone, which portal session to end -- is not something a
         // caller's metadata should be able to overwrite.
@@ -188,7 +194,7 @@ final class CaptivePortalAuthorizer
             'kind' => SessionRegistry::PORTAL,
             'username' => (string)$cpRes['username'],
             'zone' => (string)$cpRes['zone'],
-            'cp_session' => (string)($cpRes['session']['sessionId'] ?? ''),
+            'cp_session' => $session,
         ] + $idpSession);
         if ($recorded) {
             return;

@@ -94,6 +94,7 @@ eq(1, SessionRegistry::destroyAll(), 'core confirms a portal session that is alr
 Backend::$responses = [];
 
 T::group('VPN grant persistence precedes the positive verdict');
+$root = Tree::build([['name' => 'alice', 'uid' => '2100']]);
 $observedGrant = false;
 Backend::$observer = function (string $action) use (&$observedGrant): void {
 	if ($action === 'sso vpn_verdict') {

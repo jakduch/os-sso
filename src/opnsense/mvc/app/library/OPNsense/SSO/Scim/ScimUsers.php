@@ -486,9 +486,7 @@ final class ScimUsers
         $changed = $this->accounts->setDisabled($node, !$active);
         if (!$active) {
             $username = (string)$node->name;
-            $ended = SessionRegistry::destroyWhere(
-                fn(array $entry) => (string)($entry['username'] ?? '') === $username
-            );
+            $ended = SessionRegistry::destroyForAccount($node);
             syslog(LOG_NOTICE, sprintf(
                 'os-sso scim: deactivated %s, ended %d session(s)',
                 $username,
