@@ -100,6 +100,9 @@ final class CaptivePortalAuthorizer
             && is_string($session['sessionId'] ?? null)
             && $session['sessionId'] !== '';
         if (!$ok) {
+            if (is_array($session) && is_string($session['sessionId'] ?? null) && $session['sessionId'] !== '') {
+                self::disconnect(['username' => $username, 'session' => $session]);
+            }
             throw new \RuntimeException('captive portal authorization failed');
         }
 
@@ -219,7 +222,11 @@ final class CaptivePortalAuthorizer
             ));
             return;
         }
-        (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso: grant not recordable']);
+        $raw = (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso: grant not recordable']);
+        $response = json_decode((string)$raw, true);
+        if (!is_array($response) || !is_string($response['terminateCause'] ?? null)) {
+            throw new \RuntimeException('captive portal rollback was not acknowledged');
+        }
         syslog(LOG_WARNING, sprintf(
             "os-sso cp: disconnected '%s' again -- the grant could not be recorded",
             (string)$cpRes['username']

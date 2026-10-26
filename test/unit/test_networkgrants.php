@@ -109,3 +109,15 @@ foreach ([
 unset(Backend::$responses['captiveportal allow']);
 throws(fn() => \OPNsense\SSO\CaptivePortalAuthorizer::recordGrant(['username' => 'guest', 'zone' => '1', 'session' => ['clientState' => 'AUTHORIZED']], ['provider' => 'kc']), 'no revocable session ID', 'an empty portal handle is never added to the registry');
 eq([], SessionRegistry::listActive(), 'failed portal replies leave no unrevocable record');
+
+T::group('Captive portal: a contradictory reply is rolled back and failures are reported');
+Backend::$calls = [];
+Backend::$responses['captiveportal allow'] = '{"clientState":"FAILED","sessionId":"uncertain-session"}';
+throws(fn() => \OPNsense\SSO\CaptivePortalAuthorizer::authorize('1', 'kc', $identity, '192.0.2.1'), 'authorization failed', 'a session from an uncertain reply is refused');
+truthy(in_array(['captiveportal disconnect', ['uncertain-session', 'os-sso: grant not recordable']], Backend::$calls, true), 'the identified session is given back before refusing the reply');
+Backend::$responses['captiveportal disconnect'] = 'service unavailable';
+try {
+	throws(fn() => \OPNsense\SSO\CaptivePortalAuthorizer::authorize('1', 'kc', $identity, '192.0.2.1'), 'rollback was not acknowledged', 'a failed rollback is never reported as a successful disconnect');
+} finally {
+	unset(Backend::$responses['captiveportal allow'], Backend::$responses['captiveportal disconnect']);
+}
