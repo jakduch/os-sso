@@ -114,10 +114,15 @@ T::group('Captive portal: a contradictory reply is rolled back and failures are 
 Backend::$calls = [];
 Backend::$responses['captiveportal allow'] = '{"clientState":"FAILED","sessionId":"uncertain-session"}';
 throws(fn() => \OPNsense\SSO\CaptivePortalAuthorizer::authorize('1', 'kc', $identity, '192.0.2.1'), 'authorization failed', 'a session from an uncertain reply is refused');
-truthy(in_array(['captiveportal disconnect', ['uncertain-session', 'os-sso: grant not recordable']], Backend::$calls, true), 'the identified session is given back before refusing the reply');
+truthy(in_array(['captiveportal disconnect', ['uncertain-session', 'os-sso revocation']], Backend::$calls, true), 'the identified session is given back before refusing the reply');
 Backend::$responses['captiveportal disconnect'] = 'service unavailable';
 try {
 	throws(fn() => \OPNsense\SSO\CaptivePortalAuthorizer::authorize('1', 'kc', $identity, '192.0.2.1'), 'rollback was not acknowledged', 'a failed rollback is never reported as a successful disconnect');
+	eq(1, count(SessionRegistry::listActive()), 'the uncertain session remains recorded after a failed rollback');
+	truthy(SessionRegistry::listActive()[0]['revocation_pending'] ?? false, 'the failed rollback is marked for retry');
 } finally {
 	unset(Backend::$responses['captiveportal allow'], Backend::$responses['captiveportal disconnect']);
 }
+
+eq(1, SessionRegistry::sweep(), 'the sweeper retries a failed portal rollback after the backend recovers');
+eq([], SessionRegistry::listActive(), 'an acknowledged retry retires the uncertain grant');

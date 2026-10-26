@@ -187,3 +187,8 @@ SCIM and automatic deprovisioning revoke grants by their recorded local UID, inc
 portal identities whose IdP username differs from the local account name. Older grants
 retain the name-based fallback. Captive-portal replies must include both AUTHORIZED and
 a non-empty string session ID; a state-only response is not a revocable grant.
+
+A contradictory portal reply that still identifies a session creates a rollback intent
+before attempting to disconnect it. A failed disconnect remains pending for the
+sweeper; it is not logged as successful. When the session registry itself is unavailable,
+the plugin attempts a direct disconnect and reports any missing acknowledgement.

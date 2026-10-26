@@ -101,7 +101,7 @@ final class CaptivePortalAuthorizer
             && $session['sessionId'] !== '';
         if (!$ok) {
             if (is_array($session) && is_string($session['sessionId'] ?? null) && $session['sessionId'] !== '') {
-                self::disconnect(['username' => $username, 'session' => $session]);
+                self::disconnect(['username' => $username, 'zone' => $zoneId, 'provider' => $providerName, 'session' => $session]);
             }
             throw new \RuntimeException('captive portal authorization failed');
         }
@@ -202,7 +202,7 @@ final class CaptivePortalAuthorizer
         if ($recorded) {
             return;
         }
-        self::disconnect($cpRes);
+        self::disconnect($cpRes + ['provider' => (string)($idpSession['provider'] ?? '')]);
         throw new \RuntimeException(
             'captive portal authorization was taken back: the grant could not be recorded, '
             . 'and an access nothing has a record of is one nothing can revoke'
@@ -222,6 +222,23 @@ final class CaptivePortalAuthorizer
             ));
             return;
         }
+        // A contradictory allow response can still name a real network session.
+        // Keep a durable rollback intent before disconnecting whenever storage works.
+        $handle = SessionRegistry::createGrant([
+            'kind' => SessionRegistry::PORTAL,
+            'username' => (string)$cpRes['username'],
+            'provider' => (string)($cpRes['provider'] ?? ''),
+            'zone' => (string)($cpRes['zone'] ?? ''),
+            'cp_session' => $session,
+        ]);
+        if ($handle !== null) {
+            if (SessionRegistry::destroyById($handle) !== 1) {
+                throw new \RuntimeException('captive portal rollback was not acknowledged; retained for retry');
+            }
+            return;
+        }
+        // The original registry failure may also prevent storing a retry intent.
+        // Attempt the privileged disconnect directly and require its acknowledgement.
         $raw = (new Backend())->configdpRun('captiveportal disconnect', [$session, 'os-sso: grant not recordable']);
         $response = json_decode((string)$raw, true);
         if (!is_array($response) || !is_string($response['terminateCause'] ?? null)) {
