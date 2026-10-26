@@ -108,10 +108,11 @@ def saved_config_valid(
     settings: dict[str, str],
     instances: dict[str, tuple[list[str], str]] | None,
 ) -> bool:
-    if instances is None or uuid not in instances:
+    if settings.get("blocked") == "1" or instances is None or uuid not in instances:
         return False
     flags, authmode = instances[uuid]
-    return authmode == "" and settings["auth_directive"] in flags and settings["optional_directive"] in flags
+    auth_flags = [flag for flag in flags if flag.startswith("auth-user-pass-verify ")]
+    return authmode == "" and auth_flags == [settings["auth_directive"]] and settings["optional_directive"] in flags
 
 
 def configctl(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -131,16 +132,26 @@ def repair(uuids: list[str]) -> None:
             log(f"could not stop unsafe OpenVPN instance {uuid}: {result.stderr.strip()}", syslog.LOG_ERR)
 
     sync = configctl("sso", "sync_openvpn")
-    if sync.returncode != 0 or not sync.stdout.lstrip().startswith("OK:"):
+    if sync.returncode != 0 or not sync.stdout.lstrip().startswith(("OK:", "PARTIAL:")):
         detail = (sync.stderr or sync.stdout).strip()
         log(f"OpenVPN integration repair failed; managed instances remain stopped: {detail}", syslog.LOG_ERR)
         return
 
-    configure = configctl("openvpn", "configure")
-    if configure.returncode != 0:
-        log(f"OpenVPN reconfiguration failed: {configure.stderr.strip()}", syslog.LOG_ERR)
-        return
-    log(f"repaired and reconfigured managed OpenVPN instance(s): {', '.join(uuids)}")
+    manifest = load_manifest()
+    instances = saved_flags()
+    for uuid in uuids:
+        settings = (manifest or {}).get(uuid)
+        if settings is None or not saved_config_valid(uuid, settings, instances):
+            log(f"OpenVPN instance {uuid} remains stopped: saved authentication is not valid", syslog.LOG_ERR)
+            continue
+        # Restart only this validated instance. A global configure can start an
+        # unrelated, invalid selection when reconciliation reported PARTIAL.
+        restart = configctl("openvpn", "restart", uuid)
+        if restart.returncode != 0 or not generated_config_valid(settings):
+            configctl("openvpn", "stop", uuid)
+            log(f"OpenVPN instance {uuid} remains stopped: runtime authentication repair failed", syslog.LOG_ERR)
+            continue
+        log(f"repaired and restarted managed OpenVPN instance {uuid}")
 
 
 def main() -> None:

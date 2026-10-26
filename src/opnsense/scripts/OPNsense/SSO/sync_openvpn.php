@@ -28,10 +28,16 @@ if (($argv[1] ?? '') === '--stop-managed') {
 
 try {
 	$result = OpenVpnIntegration::synchronize();
+	$errors = array_map(
+		static fn(string $error): string => str_replace(["\r", "\n"], ' ', $error),
+		$result['errors'],
+	);
 	printf(
-		"OK: %d managed OpenVPN instance(s)%s\n",
+		"%s: changed=%d managed=%d%s\n",
+		$errors === [] ? 'OK' : 'PARTIAL',
+		$result['changed'] ? 1 : 0,
 		count($result['instances']),
-		$result['changed'] ? ', config updated' : '',
+		$errors === [] ? '' : '; ' . implode(' | ', $errors),
 	);
 } catch (Throwable $exception) {
 	syslog(LOG_ERR, 'os-sso: OpenVPN integration failed: ' . $exception->getMessage());

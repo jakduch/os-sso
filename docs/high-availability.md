@@ -2,7 +2,9 @@
 
 os-sso registers **Single Sign-On** as an OPNsense XMLRPC synchronization area. It
 contains the plugin-owned `OPNsense.SSO` model: OpenVPN web-auth profiles, their provider
-selection, assigned OpenVPN instance UUIDs, public host and timeout.
+selection, assigned OpenVPN instance UUIDs, public host and timeout, plus durable
+SSO account bindings. Synchronize Users and Groups as well so those bindings refer to
+the same local accounts on both nodes.
 
 Install the same os-sso version on both firewalls before synchronizing. Configure XMLRPC
 only on the primary node under **System - High Availability - Settings** and select:

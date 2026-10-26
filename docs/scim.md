@@ -25,6 +25,19 @@ another. The provider boundary applies to reads and group membership too: one pr
 token cannot enumerate another provider's users, expose them as group members, or move
 them into and out of groups.
 
+## Upgrading
+
+- SCIM membership changes now return **403** for every group carrying a firewall ACL.
+  The IdP will report provisioning errors for groups that SCIM filled previously. Remove
+  the group's privileges, or grant access through an explicit group mapping or a default
+  group instead.
+- Accounts provisioned without an optional `externalId` previously had no provider stamp.
+  After upgrading they are absent from that provider's SCIM view, and GET or PATCH by id
+  returns **404**; SSO login is unaffected. A client that looks the account up by
+  `userName` and POSTs it again, including Entra, adopts it automatically. Clients that
+  only PATCH by id must re-provision those users, for example by restarting provisioning
+  at the IdP.
+
 ## Supported
 
 `/ServiceProviderConfig`, `/ResourceTypes`, `/Schemas`, `/Users` (GET/POST/PUT/PATCH/

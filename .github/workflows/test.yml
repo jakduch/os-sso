@@ -17,10 +17,10 @@ jobs:
     name: PHP 8.3 unit and dependency checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up PHP 8.3
-        uses: shivammathur/setup-php@44454db4f0199b8b9685a5d763dc37cbf79108e1 # 2.36.0
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: "8.3"
           extensions: curl, dom, gettext, mbstring, openssl, simplexml, xml
@@ -46,7 +46,7 @@ jobs:
             repository/bootstrap.sh repository/reinstall.sh tools/extract-strings.sh \
             test/package_scripts.sh test/repository_scripts.sh \
             src/opnsense/scripts/OPNsense/SSO/*.sh \
-            src/etc/rc.d/os-sso-vpn-guard
+            src/etc/rc.d/os-sso-vpn-guard src/etc/rc.syshook.d/config/50-sso-openvpn
           sh test/package_scripts.sh
           sh test/repository_scripts.sh
 

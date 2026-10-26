@@ -341,9 +341,10 @@ class OidcController extends ApiControllerBase
             if (is_array($logout) && ($logout['type'] ?? '') === 'oidc' && !empty($logout['provider'])) {
                 $auth = $this->authServer($logout['provider']);
                 $protocol = $this->protocolFor($logout['provider'], $auth);
+                // Back through our own page, not straight to '/': see loggedoutAction().
                 $url = $protocol->buildLogoutUrl(
                     (string)($logout['id_token'] ?? ''),
-                    $this->baseUrlFor($auth) . '/'
+                    $this->baseUrlFor($auth) . OidcProtocol::POST_LOGOUT_PATH
                 );
             }
         } catch (\Throwable $e) {
@@ -353,6 +354,19 @@ class OidcController extends ApiControllerBase
         SessionEstablisher::destroyCurrent();
         $this->response->redirect($url !== '' ? $url : '/', true);
         return gettext('Logging out...');
+    }
+
+    /**
+     * GET /api/sso/oidc/loggedout -- where the IdP sends the browser after logout.
+     *
+     * Only a stepping stone to the login page: the IdP's redirect carries the IdP as
+     * Referer, which core's HTTP_REFERER check refuses on a session-less request
+     * (issue #10). This page touches no session and starts none.
+     */
+    public function loggedoutAction()
+    {
+        $this->html('', false, ['Referrer-Policy' => 'no-referrer']);
+        return HtmlPage::signedOut('/');
     }
 
     /* ------------------------------------------------------------------ */

@@ -90,16 +90,23 @@ Select an instance and apply the profile to move it under plugin management. The
 then owns that directive and `auth-user-pass-optional`; disabling, deleting or moving the
 profile removes both from the old instance without touching its other options.
 
-### Fail-closed guard
+### Managed hooks and runtime guard
 
-OPNsense's OpenVPN form only knows its built-in option list, so saving an instance can
-discard plugin-owned directives. os-sso repairs them immediately before every normal
-OpenVPN **Apply**, and its supervised guard checks both `config.xml` and the generated
-runtime file once per second. If a running managed instance lacks exactly one expected
-auth hook, has another password hook alongside it, or loses `auth-user-pass-optional`, the
-guard stops it, repairs the saved configuration, and only then lets core configure it
-again. If repair fails, the affected instance stays stopped and the failure is written to
-the system log.
+OPNsense's OpenVPN form can discard plugin-owned directives. The configuration event
+repairs the saved directives asynchronously, and the normal OpenVPN Apply hook repairs
+them before core generates runtime files. Invalid selections are reported without
+preventing independent valid instances from being reconciled.
+
+The supervised guard also checks the saved and generated configuration once per second.
+Repairing `config.xml` alone does not make an already running daemon safe: if its runtime
+file lacks the expected authentication hook, the guard stops the instance, reconciles the
+saved settings, and restarts only instances whose authentication can be validated.
+Conflicting selections or failed repairs remain stopped; unrelated instances are not
+restarted. Package installation starts the guard and upgrades restart it to load new code.
+
+Detection is periodic, not a synchronous pre-start barrier. A restart racing a configuration
+event can run until the next guard check; the guard prevents that configuration from
+remaining active unnoticed. Keep client-certificate verification enabled.
 
 > **Mind the username.** OpenVPN takes it from the client and never revisits it on a
 > deferred-auth path: the browser login decides *whether* the tunnel comes up, not *whose*
@@ -128,8 +135,21 @@ The WebGUI **Logout** button performs Single Logout: it ends the IdP session for
 (`end_session_endpoint`) and SAML, and falls back to the normal local logout for password
 sessions. Register at your IdP:
 
-- OIDC post-logout redirect: `https://<opnsense>/`
+- OIDC post-logout redirect: `https://<opnsense>/api/sso/oidc/loggedout`
 - SAML logout service: `https://<opnsense>/api/sso/saml/slo?provider=<name>`
+
+Both bring the browser back through a short "signed out" page that sends no `Referer`,
+then on to the login page. Coming straight from the IdP, the login page would be
+refused by OPNsense's HTTP_REFERER check (*The HTTP_REFERER "https://login.live.com/"
+does not match the predefined settings*), which this keeps on without listing the IdP
+under alternate hostnames.
+
+**Upgrading from 2026.10.2 or earlier:** the OIDC post-logout redirect used to be
+`https://<opnsense>/`. Register `https://<opnsense>/api/sso/oidc/loggedout` at the IdP
+(Entra ID: add it to the app's redirect URIs; Keycloak: *Valid post logout redirect
+URIs*). Until then the IdP refuses the redirect after logout: the firewall session is
+already ended, but the IdP may show an error and keep its own session. The SAML side
+needs no change.
 
 **Back-channel logout (OIDC).** Register
 `https://<opnsense>/api/sso/oidc/backchannel?provider=<name>` as the client's back-channel

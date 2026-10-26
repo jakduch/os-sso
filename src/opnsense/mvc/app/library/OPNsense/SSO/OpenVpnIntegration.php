@@ -30,20 +30,21 @@ final class OpenVpnIntegration
 
 
 	/**
-	 * Reconcile config.xml and write the guard manifest under the same lock.
+	 * Reconcile config.xml and publish the runtime guard manifest under the same lock.
 	 *
-	 * @return array{changed: bool, instances: array<string, array<string, string>>}
+	 * @return array{changed: bool, instances: array<string, array<string, string>>, errors: string[]}
 	 */
 	public static function synchronize(string $manifestPath = self::MANIFEST): array
 	{
 		return ConfigLock::with(function () use ($manifestPath): array {
 			$config = Config::getInstance();
-			/*
-			 * Publish the desired instances before validating their OpenVPN side. If
-			 * validation fails (for example, core Authentication was enabled later),
-			 * the guard still knows which running instance must be stopped.
-			 */
-			self::writeManifest(self::manifest(self::desiredInstances($config->object())), $manifestPath);
+			[$desired, $blocked] = self::desiredInstances($config->object());
+			$manifest = self::manifest($desired + $blocked);
+			foreach ($blocked as $uuid => $profile) {
+				$manifest[$uuid]['blocked'] = '1';
+			}
+			// Publish every selected instance before reconciliation can fail.
+			self::writeManifest($manifest, $manifestPath);
 			$result = self::reconcile($config->object());
 			if ($result['changed'] && $config->save() === false) {
 				throw new RuntimeException('OpenVPN integration could not save config.xml');
@@ -60,33 +61,49 @@ final class OpenVpnIntegration
 	 * Public as a test seam: production callers should use synchronize(), which also
 	 * serializes concurrent writes and updates the guard manifest.
 	 *
-	 * @return array{changed: bool, instances: array<string, array<string, string>>}
+	 * Invalid selections are reported and left untouched, while independent valid
+	 * instances are still reconciled.
+	 *
+	 * @return array{changed: bool, instances: array<string, array<string, string>>, errors: string[]}
 	 */
 	public static function reconcile(SimpleXMLElement $config): array
 	{
-		$desired = self::desiredInstances($config);
+		[$desired, $blocked, $errors] = self::desiredInstances($config);
 		$instances = self::openVpnInstances($config);
 
 		foreach ($desired as $uuid => $profile) {
 			if (!isset($instances[$uuid])) {
-				throw new RuntimeException("OpenVPN instance '{$uuid}' selected by profile '{$profile}' does not exist");
+				$errors[] = "OpenVPN instance '{$uuid}' selected by profile '{$profile}' does not exist";
+				$blocked[$uuid] = $profile;
+				unset($desired[$uuid]);
+				continue;
 			}
 			$instance = $instances[$uuid];
 			if ((string)($instance->enabled ?? '') !== '1') {
-				throw new RuntimeException("OpenVPN instance '{$uuid}' selected by profile '{$profile}' is disabled");
+				$errors[] = "OpenVPN instance '{$uuid}' selected by profile '{$profile}' is disabled";
+				$blocked[$uuid] = $profile;
+				unset($desired[$uuid]);
+				continue;
 			}
 			if ((string)($instance->role ?? '') !== 'server') {
-				throw new RuntimeException("OpenVPN instance '{$uuid}' selected by profile '{$profile}' is not a server");
+				$errors[] = "OpenVPN instance '{$uuid}' selected by profile '{$profile}' is not a server";
+				$blocked[$uuid] = $profile;
+				unset($desired[$uuid]);
+				continue;
 			}
 			if (trim((string)($instance->authmode ?? '')) !== '') {
-				throw new RuntimeException(
-					"OpenVPN instance '{$uuid}' already has Authentication configured; clear it before enabling profile '{$profile}'"
-				);
+				$errors[] = "OpenVPN instance '{$uuid}' already has Authentication configured; "
+					. "clear it before enabling profile '{$profile}'";
+				$blocked[$uuid] = $profile;
+				unset($desired[$uuid]);
 			}
 		}
 
 		$changed = false;
 		foreach ($instances as $uuid => $instance) {
+			if (isset($blocked[$uuid])) {
+				continue;
+			}
 			$original = self::flags($instance);
 			$hadOwnedHook = false;
 			$flags = [];
@@ -116,7 +133,11 @@ final class OpenVpnIntegration
 			}
 		}
 
-		return ['changed' => $changed, 'instances' => self::manifest($desired)];
+		return [
+			'changed' => $changed,
+			'instances' => self::manifest($desired),
+			'errors' => array_values(array_unique($errors)),
+		];
 	}
 
 
@@ -154,10 +175,15 @@ final class OpenVpnIntegration
 	}
 
 
-	/** @return array<string, string> instance UUID => profile name */
+	/**
+	 * @return array{array<string, string>, array<string, string>, string[]}
+	 *     desired instances, blocked instances and validation errors
+	 */
 	private static function desiredInstances(SimpleXMLElement $config): array
 	{
 		$desired = [];
+		$blocked = [];
+		$errors = [];
 		$profiles = $config->xpath('/opnsense/OPNsense/SSO/settings/vpn/profiles/profile') ?: [];
 		foreach ($profiles as $profile) {
 			if ((string)($profile->enabled ?? '') !== '1') {
@@ -171,23 +197,31 @@ final class OpenVpnIntegration
 			if ($uuids === []) {
 				continue;
 			}
-			if (preg_match('/^[A-Za-z0-9_]{1,32}$/D', $name) !== 1) {
-				throw new RuntimeException("Invalid os-sso OpenVPN profile name '{$name}'");
-			}
 			foreach ($uuids as $uuid) {
 				if (preg_match('/^[0-9a-f-]{36}$/D', $uuid) !== 1) {
-					throw new RuntimeException("Invalid OpenVPN instance UUID '{$uuid}' in profile '{$name}'");
+					$errors[] = "Invalid OpenVPN instance UUID '{$uuid}' in profile '{$name}'";
+					continue;
 				}
-				if (isset($desired[$uuid])) {
-					throw new RuntimeException(
-						"OpenVPN instance '{$uuid}' is selected by both '{$desired[$uuid]}' and '{$name}'"
+				if (preg_match('/^[A-Za-z0-9_]{1,32}$/D', $name) !== 1) {
+					$errors[] = "Invalid os-sso OpenVPN profile name '{$name}'";
+					$blocked[$uuid] = $name;
+					unset($desired[$uuid]);
+					continue;
+				}
+				if (isset($desired[$uuid]) || isset($blocked[$uuid])) {
+					$owner = $desired[$uuid] ?? $blocked[$uuid];
+					$errors[] = sprintf(
+						"OpenVPN instance '{$uuid}' is selected by both '{$owner}' and '{$name}'"
 					);
+					$blocked[$uuid] = $owner;
+					unset($desired[$uuid]);
+					continue;
 				}
 				$desired[$uuid] = $name;
 			}
 		}
 
-		return $desired;
+		return [$desired, $blocked, array_values(array_unique($errors))];
 	}
 
 
@@ -229,6 +263,7 @@ final class OpenVpnIntegration
 			$instance->addChild('various_flags', $value);
 		}
 	}
+
 
 
 	/** @param array<string, array<string, string>> $instances */
