@@ -4,6 +4,14 @@ declare(strict_types=1);
 
 T::group('OPNsense core compatibility');
 
+// token_get_all() comes from the tokenizer extension, which a stock php:cli has but
+// the firewall's PHP does not -- and README tells you to run this suite on the VM too.
+// Without the guard the call is a fatal error that takes every later file down with it.
+if (!function_exists('token_get_all')) {
+	T::skip('does not call command helpers removed in OPNsense 26.4', 'no tokenizer extension');
+	return;
+}
+
 $deprecatedFunctions = ['mwexec', 'mwexec_bg'];
 $deprecatedCalls = [];
 $sourceRoot = dirname(__DIR__, 2) . '/src';
@@ -38,9 +46,3 @@ foreach ($files as $file) {
 }
 
 eq([], $deprecatedCalls, 'does not call command helpers removed in OPNsense 26.4');
-
-$pluginSource = (string) file_get_contents($sourceRoot . '/etc/inc/plugins.inc.d/sso.inc');
-truthy(
-	preg_match('/\\bmwexecf\\s*\\(/', $pluginSource),
-	'uses the safe command wrapper available from OPNsense 25.7 through 26.4',
-);

@@ -1,5 +1,5 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Maxime Wewer
+# Copyright (C) YEAR Maxime Wewer and os-sso contributors
 # This file is distributed under the same license as the os-sso package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
@@ -7,8 +7,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: os-sso\n"
-"Report-Msgid-Bugs-To: https://github.com/MaximeWewer/os-sso/issues\n"
-"POT-Creation-Date: 2026-10-02 18:30+0200\n"
+"Report-Msgid-Bugs-To: https://github.com/jakduch/os-sso/issues\n"
+"POT-Creation-Date: 2026-10-26 17:24+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -19,6 +19,17 @@ msgstr ""
 
 #: src/etc/inc/plugins.inc.d/sso.inc:47
 msgid "os-sso OpenVPN authentication guard"
+msgstr ""
+
+#: src/etc/inc/plugins.inc.d/sso.inc:62
+msgid "Single Sign-On"
+msgstr ""
+
+#: src/etc/inc/plugins.inc.d/sso.inc:64
+msgid ""
+"Synchronize os-sso OpenVPN web-auth profiles to the other HA host. Enable "
+"Authentication Servers, OpenVPN, Users and Groups, and Certificates "
+"separately when used."
 msgstr ""
 
 #: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/JwtController.php:51
@@ -36,14 +47,14 @@ msgid "Login successful, redirecting..."
 msgstr ""
 
 #: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/JwtController.php:200
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/OidcController.php:495
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:602
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/OidcController.php:512
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:611
 msgid "SSO login failed. See the firewall system log for details."
 msgstr ""
 
 #: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/LogoutController.php:64
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/OidcController.php:355
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:353
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/OidcController.php:356
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:362
 msgid "Logging out..."
 msgstr ""
 
@@ -52,8 +63,8 @@ msgstr ""
 msgid "Redirecting to identity provider..."
 msgstr ""
 
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:322
-#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:362
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:331
+#: src/opnsense/mvc/app/controllers/OPNsense/SSO/Api/SamlController.php:371
 msgid "Logged out."
 msgstr ""
 
@@ -1020,6 +1031,18 @@ msgstr ""
 msgid "Signed in as %s. You now have network access."
 msgstr ""
 
+#: src/opnsense/mvc/app/library/OPNsense/SSO/HtmlPage.php:67
+msgid "Signed out"
+msgstr ""
+
+#: src/opnsense/mvc/app/library/OPNsense/SSO/HtmlPage.php:68
+msgid "You have been signed out."
+msgstr ""
+
+#: src/opnsense/mvc/app/library/OPNsense/SSO/HtmlPage.php:69
+msgid "Back to the login page"
+msgstr ""
+
 #: src/opnsense/mvc/app/library/OPNsense/SSO/LogoutGuard.php:76
 msgid "Sign out"
 msgstr ""
@@ -1050,20 +1073,20 @@ msgid ""
 "Signed in as %s. You can close this window and return to your VPN client."
 msgstr ""
 
-#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:48
+#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:47
 msgid ""
 "This OpenVPN instance is already assigned to another enabled SSO profile."
 msgstr ""
 
-#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:56
+#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:55
 msgid "A selected OpenVPN instance does not exist."
 msgstr ""
 
-#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:65
+#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:64
 msgid "Select enabled OpenVPN server instances only."
 msgstr ""
 
-#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:71
+#: src/opnsense/mvc/app/models/OPNsense/SSO/Settings.php:70
 msgid ""
 "Clear Authentication on every selected OpenVPN instance; os-sso supplies its "
 "authentication hook."
