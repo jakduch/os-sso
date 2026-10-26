@@ -75,7 +75,11 @@ eq(1, SessionRegistry::sweep(), 'the old, replaced account is independently revo
 T::group('VPN: an exception while writing a verdict starts revocation');
 Tree::build([['name' => 'alice', 'uid' => '2100']]);
 Backend::$responses['sso vpn_kill'] = '{"status":"error","killed":0}';
-Backend::$observer = function (string $action): void {
+$unlockedDuringRollback = false;
+Backend::$observer = function (string $action) use (&$unlockedDuringRollback): void {
+	if ($action === 'sso vpn_kill') {
+		$unlockedDuringRollback = Config::$locks === Config::$unlocks;
+	}
 	if ($action === 'sso vpn_verdict') {
 		throw new RuntimeException('configd transport failure');
 	}
@@ -85,6 +89,7 @@ try {
 	$pending = SessionRegistry::listActive();
 	eq(1, count($pending), 'an unacknowledged disconnect leaves a retryable grant');
 	truthy($pending[0]['revocation_pending'] ?? false, 'revocation starts immediately rather than at original expiry');
+	truthy($unlockedDuringRollback, 'a failed backend cannot keep the global configuration lock during rollback');
 } finally {
 	Backend::$observer = null;
 	unset(Backend::$responses['sso vpn_kill']);

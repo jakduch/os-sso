@@ -182,7 +182,9 @@ request cannot sweep away another worker's unfinished marker.
 Final VPN approval reloads the local account under the core configuration lock and
 keeps that lock through grant persistence and the privileged verdict. A missing,
 disabled or expired account is refused before the VPN backend is called. An exception
-or uncertain verdict starts revocation immediately; failed disconnects remain pending.
+or uncertain verdict starts revocation immediately after releasing the configuration
+lock; failed disconnects remain pending. Local inspect/verdict calls use bounded
+10-second response and 3-second connect timeouts while the lock is held.
 SCIM and automatic deprovisioning revoke grants by their recorded local UID, including
 portal identities whose IdP username differs from the local account name. Older grants
 retain the name-based fallback. Captive-portal replies must include both AUTHORIZED and

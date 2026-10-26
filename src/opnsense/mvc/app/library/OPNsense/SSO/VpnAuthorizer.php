@@ -28,11 +28,22 @@ final class VpnAuthorizer
      */
     public static function authorize(string $vpn, string $username, string $browserIp, array $idpSession = []): string
     {
-		return ConfigLock::with(fn(): string => self::authorizeLocked($vpn, $username, $browserIp, $idpSession));
+		$handle = null;
+		try {
+			return ConfigLock::with(function () use ($vpn, $username, $browserIp, $idpSession, &$handle): string {
+				return self::authorizeLocked($vpn, $username, $browserIp, $idpSession, $handle);
+			});
+		} catch (\Throwable $error) {
+			// Cleanup can wait on a backend. Release the global configuration lock first.
+			if ($handle !== null) {
+				SessionRegistry::destroyById($handle);
+			}
+			throw $error;
+		}
 	}
 
 
-	private static function authorizeLocked(string $vpn, string $username, string $browserIp, array $idpSession): string
+	private static function authorizeLocked(string $vpn, string $username, string $browserIp, array $idpSession, ?string &$handle): string
 	{
 		$account = (new LocalAccountWriter())->findByName($username);
 		if ($account === null) {
@@ -50,7 +61,7 @@ final class VpnAuthorizer
         // configd into a positional shell argument.
         $user = preg_replace('/[^A-Za-z0-9._\- ]/', '', $username);
         $backend = new Backend();
-        $inspect = rtrim((string)$backend->configdpRun('sso vpn_inspect', [$sid, $ip, $user]), "\r\n");
+        $inspect = rtrim((string)$backend->configdpRun('sso vpn_inspect', [$sid, $ip, $user], false, 10, 3), "\r\n");
         $parts = explode(' ', $inspect, 2);
         $clientUsername = $parts[1] ?? '';
         if (($parts[0] ?? '') !== 'ok' || preg_match('/^[A-Za-z0-9._@ -]{1,64}$/D', $clientUsername) !== 1) {
@@ -65,16 +76,11 @@ final class VpnAuthorizer
         if ($handle === null) {
             throw new \RuntimeException('VPN authorization refused: the grant could not be recorded');
         }
-		try {
-			$out = rtrim((string)$backend->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user]), "\r\n");
-			if ($out !== $inspect) {
-				throw new \RuntimeException('VPN authorization failed: ' . $out);
-			}
-		} catch (\Throwable $error) {
-			// A failed or uncertain response must undo any access already granted.
-			// Failed disconnects remain recorded for retry by the registry.
-			SessionRegistry::destroyById($handle);
-			throw $error;
+		// These local verdict scripts should finish promptly; bound the time for
+		// which a stalled configd can keep all configuration writers waiting.
+		$out = rtrim((string)$backend->configdpRun('sso vpn_verdict', [$sid, '1', $ip, $user], false, 10, 3), "\r\n");
+		if ($out !== $inspect) {
+			throw new \RuntimeException('VPN authorization failed: ' . $out);
 		}
         syslog(LOG_NOTICE, sprintf("os-sso vpn: authorized tunnel for '%s' from %s", $username, $ip));
         return $clientUsername;
