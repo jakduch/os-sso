@@ -41,6 +41,23 @@ final class SessionEstablisher
      */
     public function establish(string $localUsername, string $authServerName, array $idpSession = []): void
     {
+		if (session_status() !== PHP_SESSION_ACTIVE) {
+			throw new \RuntimeException('SSO: refusing to establish an inactive browser session');
+		}
+		try {
+			ConfigLock::with(function () use ($localUsername, $authServerName, $idpSession): void {
+				$this->establishLocked($localUsername, $authServerName, $idpSession);
+			});
+			SessionRegistry::sweep();
+		} catch (\Throwable $error) {
+			self::destroyCurrent();
+			throw $error;
+		}
+	}
+
+
+	private function establishLocked(string $localUsername, string $authServerName, array $idpSession): void
+	{
         $cnf = Config::getInstance()->object();
 
         // 1. The local user must exist AND be enabled, or the ACL grants nothing.
@@ -52,8 +69,8 @@ final class SessionEstablisher
         }
 
         // 2. Anti-fixation. Non-negotiable. true => destroy the old session id.
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_regenerate_id(true);
+        if (!session_regenerate_id(true)) {
+            throw new \RuntimeException('SSO: browser session ID could not be regenerated');
         }
 
         // 3. Core success-path session variables (copied from authgui.inc, not guessed).
@@ -72,7 +89,7 @@ final class SessionEstablisher
         //    back-channel logout from the IdP, or its own absolute deadline. Also
         //    sweep whatever has meanwhile expired -- a login is a cheap, regular
         //    moment to do it, on top of the scheduled "sso expire_sessions" action.
-        SessionRegistry::record([
+        $recorded = SessionRegistry::record([
             'username' => $localUsername,
             'provider' => $authServerName,
             'issuer' => (string)($idpSession['issuer'] ?? ''),
@@ -80,7 +97,9 @@ final class SessionEstablisher
             'sid' => (string)($idpSession['sid'] ?? ''),
             'lifetime' => (int)($idpSession['lifetime'] ?? 0),
         ]);
-        SessionRegistry::sweep();
+        if (!$recorded) {
+            throw new \RuntimeException('SSO: browser session could not be recorded');
+        }
 
         // 6. Audit, matching the core wording so log tooling stays uniform.
         $this->audit($localUsername, $authServerName);

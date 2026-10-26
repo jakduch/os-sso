@@ -283,9 +283,11 @@ class SamlController extends ApiControllerBase
                 // session, then the first configured SAML provider. Only a selector:
                 // whichever we land on, the message is validated against ITS cert.
                 $message = $posted ? $_POST : $_GET;
-                $provider = $this->samlProviderByIssuer(SamlProtocol::peekSloIssuer($message))
-                    ?: ($this->knownSamlProvider((string)($this->request->get('provider') ?? ''))
-                        ?: (($_SESSION['sso_logout']['provider'] ?? '') ?: $this->firstSamlProvider()));
+                // Metadata publishes a provider-specific SLO URL. Prefer that
+                // configured provider; an issuer alone can identify several clients.
+                $provider = $this->knownSamlProvider((string)($this->request->get('provider') ?? ''))
+                    ?: ($this->samlProviderByIssuer(SamlProtocol::peekSloIssuer($message))
+                        ?: ($this->knownSamlProvider((string)($_SESSION['sso_logout']['provider'] ?? '')) ?: $this->firstSamlProvider()));
                 $protocol = $this->protocolFor($provider);
                 // Single use, and dropped before validation rather than after: the
                 // session is destroyed further down on the happy path, but a
@@ -299,7 +301,7 @@ class SamlController extends ApiControllerBase
                 // redirect. End the subject's other sessions on this firewall too --
                 // otherwise "logged out at the IdP" leaves the second tab, or the
                 // session opened from another machine, working until it idles out.
-                $this->endSessionsFor($protocol, $slo['subject']);
+                $this->endSessionsFor($protocol, $slo['subject'], (string)$provider);
                 // ... and end this browser's own session, unless the message is about
                 // somebody else. An IdP-initiated LogoutRequest names its subject, and
                 // it arrives in whatever browser followed the redirect: logging that
@@ -307,7 +309,12 @@ class SamlController extends ApiControllerBase
                 // logout landing on them. The sessions that really are the subject's
                 // were ended above, by their recorded binding rather than by who
                 // happens to be holding the cookie.
-                $mine = $this->currentSessionIsFor((string)($slo['subject']['name_id'] ?? ''));
+                $mine = LogoutGuard::matchesSamlSession(
+                    (array)($_SESSION['sso_logout'] ?? []),
+                    (string)$provider,
+                    (string)($slo['subject']['name_id'] ?? ''),
+                    (array)($slo['subject']['session_indexes'] ?? [])
+                );
             } catch (\Throwable $e) {
                 return $this->fail($e);
             }
@@ -379,7 +386,7 @@ class SamlController extends ApiControllerBase
      *
      * @param array{name_id:string,session_indexes:string[]} $subject
      */
-    private function endSessionsFor(SamlProtocol $protocol, array $subject): void
+    private function endSessionsFor(SamlProtocol $protocol, array $subject, string $provider): void
     {
         $nameId = (string)($subject['name_id'] ?? '');
         if ($nameId === '') {
@@ -389,32 +396,13 @@ class SamlController extends ApiControllerBase
         $indexes = $subject['session_indexes'] ?: [''];
         $ended = 0;
         foreach ($indexes as $index) {
-            $ended += SessionRegistry::destroyForSubject($issuer, $nameId, (string)$index);
+            $ended += SessionRegistry::destroyForSubject($issuer, $nameId, (string)$index, $provider);
         }
         if ($ended > 0) {
             syslog(LOG_NOTICE, sprintf('os-sso saml: single logout ended %d session(s)', $ended));
         }
     }
 
-
-    /**
-     * Is the session in this browser the one the SLO message is about?
-     *
-     * A LogoutResponse names nobody -- it answers a request we made from this very
-     * session -- so an unnamed subject means yes. A LogoutRequest does name one, and
-     * then the answer is whether it is the NameID this session logged in with.
-     */
-    private function currentSessionIsFor(string $nameId): bool
-    {
-        if ($nameId === '') {
-            return true;
-        }
-        $session = $_SESSION['sso_logout'] ?? null;
-        $mine = is_array($session) ? (string)($session['nameid'] ?? '') : '';
-        // No SAML session here at all: nothing of ours to keep, and destroying an
-        // empty session is what the previous behaviour did anyway.
-        return $mine === '' || hash_equals($mine, $nameId);
-    }
 
     /** First configured SAML auth server name (for IdP-initiated SLO without a session). */
     private function firstSamlProvider(): string

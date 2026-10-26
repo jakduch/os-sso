@@ -303,7 +303,8 @@ class OidcController extends ApiControllerBase
             $ended = SessionRegistry::destroyForSubject(
                 $protocol->getIssuer(),
                 $subject['sub'],
-                $subject['sid']
+                $subject['sid'],
+                (string)$provider
             );
             syslog(LOG_NOTICE, sprintf(
                 'os-sso oidc: back-channel logout from %s ended %d session(s)',

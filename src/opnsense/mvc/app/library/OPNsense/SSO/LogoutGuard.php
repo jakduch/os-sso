@@ -52,6 +52,19 @@ final class LogoutGuard
         return false; // cannot prove same-origin: ask the user
     }
 
+	/** Matches a validated SAML logout to this browser's authentication context. */
+	public static function matchesSamlSession(array $session, string $provider, string $nameId, array $sessionIndexes = []): bool
+	{
+		if (($session['type'] ?? '') !== 'saml' || $provider === '' || ($session['provider'] ?? '') !== $provider) {
+			return false;
+		}
+		// An unnamed subject is a response already correlated to our LogoutRequest.
+		$mine = (string)($session['nameid'] ?? '');
+		$subjectMatches = $nameId === '' || ($mine !== '' && hash_equals($mine, $nameId));
+		return $subjectMatches && ($sessionIndexes === [] || in_array((string)($session['sessionindex'] ?? ''), $sessionIndexes, true));
+	}
+
+
     /** True when this is the POST from our own confirmation page. */
     private static function isConfirmedPost(): bool
     {

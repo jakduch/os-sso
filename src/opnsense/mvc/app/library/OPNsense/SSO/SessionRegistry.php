@@ -50,16 +50,23 @@ final class SessionRegistry
      *
      * @param array $meta provider, issuer, sub, sid (IdP session id), lifetime (s)
      */
-    public static function record(array $meta): void
+    public static function record(array $meta): bool
     {
         $sessionId = session_id();
-        if ($sessionId === '' || $sessionId === false) {
-            return;
+        if (session_status() !== PHP_SESSION_ACTIVE || $sessionId === '' || $sessionId === false) {
+            return false;
+        }
+        if (ini_get('session.save_handler') !== 'files') {
+            return false; // The revoker requires the native PHP file handler.
+        }
+        $sessionFile = self::sessionFile($sessionId);
+        if (!is_file($sessionFile)) {
+            return false;
         }
         $lifetime = max(0, (int)($meta['lifetime'] ?? 0));
-        self::write(hash('sha256', $sessionId), [
+        return self::write(hash('sha256', $sessionId), [
             'kind' => self::WEBGUI,
-            'file' => self::sessionFile($sessionId),
+            'file' => $sessionFile,
             'username' => (string)($meta['username'] ?? ''),
             'provider' => (string)($meta['provider'] ?? ''),
             'issuer' => (string)($meta['issuer'] ?? ''),
@@ -67,7 +74,7 @@ final class SessionRegistry
             'sid' => (string)($meta['sid'] ?? ''),
             'started' => time(),
             'expires_at' => $lifetime > 0 ? time() + $lifetime : 0,
-        ]);
+        ] + self::accountReference($meta, true));
     }
 
     /**
@@ -119,9 +126,28 @@ final class SessionRegistry
             'vpn_username' => (string)($meta['vpn_username'] ?? $meta['vpn_cn'] ?? ''),
             'started' => time(),
             'expires_at' => time() + ($lifetime > 0 ? min($lifetime, self::GRANT_TTL) : self::GRANT_TTL),
-        ]);
+        ] + self::accountReference($meta, $kind === self::VPN));
         return $written ? $handle : null;
     }
+
+	/** Pins grants to an existing local account while allowing accountless portal guests. */
+	private static function accountReference(array $meta, bool $required): array
+	{
+		$accounts = new LocalAccountWriter();
+		$provider = (string)($meta['provider'] ?? '');
+		$subject = (string)($meta['sub'] ?? '');
+		$node = $provider !== '' && $subject !== ''
+			? $accounts->findBySubject($provider . '|' . $subject)
+			: null;
+		$node ??= $accounts->findByName((string)($meta['username'] ?? ''));
+		return [
+			'account_required' => $required || $node !== null,
+			'account_uid' => (string)($node->uid ?? ''),
+			'account_name' => (string)($node->name ?? ''),
+			'account_uuid' => $node === null ? '' : (string)($node->attributes()['uuid'] ?? ''),
+		];
+	}
+
 
     /**
      * Persist one record, 0600, named by the handle the diagnostics page hands back.
@@ -252,10 +278,12 @@ final class SessionRegistry
     {
         $now = time();
         $accounts = [];
+        $byUid = [];
         foreach ((new LocalAccountWriter())->users() as $node) {
             $accounts[(string)$node->name] = $node;
+            $byUid[(string)$node->uid] = $node;
         }
-        return self::destroyWhere(function (array $entry) use ($now, $accounts) {
+        return self::destroyWhere(function (array $entry) use ($now, $accounts, $byUid) {
             if (!empty($entry['revocation_pending'])) {
                 return true;
             }
@@ -268,13 +296,25 @@ final class SessionRegistry
             // tunnel never makes one to us at all. The operator's own checkbox, an
             // <expires> date and anything that disabled the account outside the two
             // paths that end sessions themselves all land here.
-            $username = (string)($entry['username'] ?? '');
-            if ($username !== '') {
-                $node = $accounts[$username] ?? null;
-                if ($node !== null && !LocalAccount::isUsable($node)) {
-                    return true;
-                }
-            }
+			$username = (string)($entry['username'] ?? '');
+			$uid = (string)($entry['account_uid'] ?? '');
+			$required = $entry['account_required'] ?? ((string)($entry['kind'] ?? self::WEBGUI) !== self::PORTAL);
+			$node = $uid !== '' ? ($byUid[$uid] ?? null) : ($accounts[$username] ?? null);
+			if ($required && $node === null) {
+				return true;
+			}
+			if ($node !== null) {
+				if (!LocalAccount::isUsable($node)) {
+					return true;
+				}
+				if ($uid !== '' && (string)$node->name !== (string)$entry['account_name']) {
+					return true; // The browser still carries the old username.
+				}
+				$uuid = (string)($entry['account_uuid'] ?? '');
+				if ($uuid !== '' && $uuid !== (string)($node->attributes()['uuid'] ?? '')) {
+					return true;
+				}
+			}
             // A portal or VPN grant has no PHP session behind it; its own deadline is
             // the only thing that retires it (see GRANT_TTL).
             return (string)($entry['kind'] ?? self::WEBGUI) === self::WEBGUI
@@ -287,19 +327,19 @@ final class SessionRegistry
      * Matching on the IdP session id when the logout token carries one, otherwise on
      * the subject, always scoped to the issuer that vouched for it.
      */
-    public static function destroyForSubject(string $issuer, string $sub, string $sid): int
+    public static function destroyForSubject(string $issuer, string $sub, string $sid, string $provider): int
     {
-        if ($issuer === '' || ($sub === '' && $sid === '')) {
+        if ($issuer === '' || $provider === '' || ($sub === '' && $sid === '')) {
             return 0;
         }
-        return self::destroyWhere(function (array $entry) use ($issuer, $sub, $sid) {
-            if ((string)($entry['issuer'] ?? '') !== $issuer) {
+        return self::destroyWhere(function (array $entry) use ($issuer, $sub, $sid, $provider) {
+            if ((string)($entry['issuer'] ?? '') !== $issuer || (string)($entry['provider'] ?? '') !== $provider) {
                 return false;
             }
-            if ($sid !== '' && (string)($entry['sid'] ?? '') !== '') {
-                return hash_equals((string)$entry['sid'], $sid);
-            }
-            return $sub !== '' && hash_equals((string)($entry['sub'] ?? ''), $sub);
+			if ($sid !== '' && !hash_equals((string)($entry['sid'] ?? ''), $sid)) {
+				return false;
+			}
+			return $sub === '' || hash_equals((string)($entry['sub'] ?? ''), $sub);
         });
     }
 
@@ -381,12 +421,14 @@ final class SessionRegistry
 
     private static function sessionFile(string $sessionId): string
     {
-        $path = (string)session_save_path();
-        // save_path may carry "N;/path" or "N;MODE;/path" prefixes.
-        if (str_contains($path, ';')) {
-            $parts = explode(';', $path);
-            $path = (string)end($parts);
-        }
-        return ($path !== '' ? $path : sys_get_temp_dir()) . '/sess_' . $sessionId;
+		$parts = explode(';', (string)session_save_path());
+		$path = (string)end($parts);
+		$depth = count($parts) > 1 ? (int)$parts[0] : 0;
+		$path = $path !== '' ? $path : sys_get_temp_dir();
+		// PHP's N;[MODE;]/path layout uses one session-ID character per directory.
+		for ($index = 0; $index < min($depth, strlen($sessionId)); $index++) {
+			$path .= '/' . $sessionId[$index];
+		}
+		return $path . '/sess_' . $sessionId;
     }
 }

@@ -163,9 +163,17 @@ final class JwtProtocol
         if ($fp === false) {
             throw new \RuntimeException('JWT: token replay detected');
         }
-        fwrite($fp, json_encode(['exp' => (int)$claims->exp]));
-        fclose($fp);
-        @chmod($file, 0600);
+        try {
+            $marker = json_encode(['exp' => (int)$claims->exp], JSON_THROW_ON_ERROR);
+            if (fwrite($fp, $marker) !== strlen($marker) || !fflush($fp)) {
+                throw new \RuntimeException('JWT: replay protection could not persist the token');
+            }
+            if (!chmod($file, 0600)) {
+                throw new \RuntimeException('JWT: replay marker permissions could not be secured');
+            }
+        } finally {
+            fclose($fp);
+        }
     }
 
     /** Drop replay markers for tokens that have expired anyway. */
@@ -174,8 +182,10 @@ final class JwtProtocol
         $now = time();
         foreach (glob($dir . '/*.json') ?: [] as $f) {
             $entry = json_decode((string)@file_get_contents($f), true);
-            $exp = is_array($entry) ? (int)($entry['exp'] ?? 0) : 0;
-            if ($exp + self::MAX_LEEWAY < $now) {
+            // An exclusive creator may still be writing this marker. Treat a
+            // partial/corrupt marker as consumed, never as permission to replay.
+            $exp = is_array($entry) ? ($entry['exp'] ?? null) : null;
+            if (is_int($exp) && $exp > 0 && $exp <= $now - self::MAX_LEEWAY) {
                 @unlink($f);
             }
         }

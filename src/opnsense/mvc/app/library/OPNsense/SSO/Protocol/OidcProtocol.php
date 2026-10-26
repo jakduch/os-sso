@@ -568,22 +568,37 @@ final class OidcProtocol implements ProtocolInterface
         if (!in_array($this->clientId, (array)($claims->aud ?? []), true)) {
             throw new \RuntimeException('OIDC logout: audience does not contain client_id');
         }
-        if (!isset($claims->iat) || (time() - (int)$claims->iat) > self::LOGOUT_TOKEN_TTL) {
-            throw new \RuntimeException('OIDC logout: token is missing iat or too old');
-        }
-        if (isset($claims->nonce)) {
+		foreach (['iat', 'exp'] as $claim) {
+			$value = $claims->{$claim} ?? null;
+			if ((!is_int($value) && !is_float($value)) || !is_finite((float)$value) || $value <= 0) {
+				throw new \RuntimeException('OIDC logout: token is missing a valid ' . $claim);
+			}
+		}
+		if ($claims->iat > time() + self::LEEWAY || time() - $claims->iat > self::LOGOUT_TOKEN_TTL || $claims->exp <= $claims->iat) {
+			throw new \RuntimeException('OIDC logout: invalid token time window');
+		}
+		if (!is_string($claims->jti ?? null) || $claims->jti === '') {
+			throw new \RuntimeException('OIDC logout: token is missing a valid jti');
+		}
+        if (property_exists($claims, 'nonce')) {
             throw new \RuntimeException('OIDC logout: a logout token must not carry a nonce');
         }
         $events = (array)($claims->events ?? []);
-        if (!array_key_exists('http://schemas.openid.net/event/backchannel-logout', $events)) {
+        $event = $events['http://schemas.openid.net/event/backchannel-logout'] ?? null;
+        if (!is_object($event) || (array)$event !== []) {
             throw new \RuntimeException('OIDC logout: token does not carry the backchannel-logout event');
         }
-        $sub = isset($claims->sub) && is_scalar($claims->sub) ? (string)$claims->sub : '';
-        $sid = isset($claims->sid) && is_scalar($claims->sid) ? (string)$claims->sid : '';
+        foreach (['sub', 'sid'] as $claim) {
+            if (property_exists($claims, $claim) && (!is_string($claims->{$claim}) || $claims->{$claim} === '')) {
+                throw new \RuntimeException('OIDC logout: invalid ' . $claim);
+            }
+        }
+        $sub = $claims->sub ?? '';
+        $sid = $claims->sid ?? '';
         if ($sub === '' && $sid === '') {
             throw new \RuntimeException('OIDC logout: token names neither sub nor sid');
         }
-        $this->guardLogoutReplay(isset($claims->jti) && is_scalar($claims->jti) ? (string)$claims->jti : '');
+        $this->guardLogoutReplay($claims->jti);
 
         return ['sub' => $sub, 'sid' => $sid];
     }
@@ -591,16 +606,19 @@ final class OidcProtocol implements ProtocolInterface
     /** Accept each logout token's jti once, so a captured one cannot be re-fired. */
     private function guardLogoutReplay(string $jti): void
     {
-        if ($jti === '') {
-            return; // optional claim; the short iat window is what bounds it then
-        }
         $dir = StateDir::path('oidc-logout');
         foreach (glob($dir . '/*.marker') ?: [] as $old) {
-            if ((time() - (int)@filemtime($old)) > self::LOGOUT_TOKEN_TTL) {
+            if ((time() - (int)@filemtime($old)) > self::LOGOUT_TOKEN_TTL + self::LEEWAY) {
                 @unlink($old);
             }
         }
-        $file = $dir . '/' . hash('sha256', $this->issuer . '|' . $jti) . '.marker';
+        // Older releases shared markers across clients. Keep their replay decision
+        // during the remaining acceptance window while new markers are client-scoped.
+        $legacy = $dir . '/' . hash('sha256', $this->issuer . '|' . $jti) . '.marker';
+        if (is_file($legacy)) {
+            throw new \RuntimeException('OIDC logout: token replay detected');
+        }
+        $file = $dir . '/' . hash('sha256', json_encode([$this->issuer, $this->clientId, $jti], JSON_THROW_ON_ERROR)) . '.marker';
         $fp = @fopen($file, 'x');
         if ($fp === false) {
             throw new \RuntimeException('OIDC logout: token replay detected');
