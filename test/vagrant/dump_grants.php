@@ -6,7 +6,7 @@
  *
  * List the accesses os-sso recorded, one per line:
  *
- *   <kind> <username> <cp_session|-> <vpn_cn|->
+ *   <kind> <username> <cp_session|-> <vpn_username|->
  *
  * What the diagnostics page shows, without a session: the suites use it to find the
  * handle of the access they just created and then check it really went away.
@@ -28,6 +28,6 @@ foreach (SessionRegistry::listActive() as $entry) {
         $entryKind,
         (string)($entry['username'] ?? '-') ?: '-',
         (string)($entry['cp_session'] ?? '-') ?: '-',
-        (string)($entry['vpn_cn'] ?? '-') ?: '-'
+        (string)($entry['vpn_username'] ?? $entry['vpn_cn'] ?? '-') ?: '-'
     );
 }

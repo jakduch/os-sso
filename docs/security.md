@@ -145,3 +145,14 @@ before a positive deferred-auth verdict is sent.
 SAML assertion replay markers last through the signed SubjectConfirmation expiry plus
 clock tolerance. The shorter login-request TTL does not limit replay protection. Legacy
 markers without an expiry remain retained rather than being discarded unsafely.
+
+VPN revocation resolves the exact client `Username` from OpenVPN management `status 3`,
+then sends `client-kill` with numeric client IDs. Certificate common names can differ
+from usernames. Incomplete, malformed or timed-out management responses retain the
+grant for retry rather than acknowledging a disconnect.
+
+Managed VPN instances reject `auth-gen-token` because OpenVPN accepts these credentials
+without consulting the SSO hook on reconnect. A configured token lifetime, including
+`0`, blocks profile application and keeps the instance stopped during guard repair.
+Manually wired instances must omit this directive as well. Revocation sends the
+`AUTH_FAILED` control message rather than requesting an automatic client restart.

@@ -71,15 +71,18 @@ independent factors: a device certificate and the browser login (including the I
 passkey). os-sso also adds `auth-user-pass-optional`, so a web-auth-capable client need not
 send a reusable password.
 
-Set **Auth Token Lifetime** on the OpenVPN instance if an established client should pass an
-OpenVPN-generated token on later TLS renegotiations instead of opening the browser again.
-The token is checked locally by OpenVPN; Keycloak logout, SCIM deactivation and the os-sso
-maximum session lifetime can still terminate the recorded tunnel. In an HA pair, use the
-same **Auth Token secret** on both nodes if tokens must survive a failover.
+Leave **Auth Token Lifetime** empty on SSO-managed instances. OpenVPN-generated
+`auth-gen-token` credentials can reconnect without calling the SSO hook, so disconnecting
+a revoked account cannot prevent its token from reopening access. The profile validator,
+reconciler and runtime guard refuse this combination, including a lifetime of `0`
+(which means an unlimited token lifetime). The guard stops an affected managed instance
+and leaves it stopped until the token setting is cleared. TLS renegotiation therefore
+uses browser authentication again.
 
 ### Existing manually wired profiles
 
-Profiles created before managed instances were introduced keep their instance field empty
+Manually wired instances must also omit `auth-gen-token`; they are outside the managed
+runtime guard. Profiles created before managed instances were introduced keep their instance field empty
 and continue to use their existing manual directive:
 
 ```text
@@ -117,8 +120,10 @@ unwritable registry refuses the new tunnel instead of creating untracked access.
 > deferred-auth path: the browser login decides *whether* the tunnel comes up, not *whose*
 > it is. **Require the username to match** is therefore enabled by default and refuses
 > an empty username as well as a mismatch. Turn it off only when the server never uses
-> the username for `username-as-common-name`, a `client-config-dir`, per-user rules,
-> addressing or revocation, and clients intentionally send a throwaway value. Both names
+> the username for `username-as-common-name`, a `client-config-dir`, per-user rules or
+> addressing, and clients intentionally send a throwaway value. Revocation still locates
+> that exact client username in management status; it does not assume that the certificate
+> common name equals the username. Both names
 > are logged on the firewall when that compatibility mode is used.
 
 Use a web-auth-capable client (OpenVPN Connect, OpenVPN 3 Linux) - see

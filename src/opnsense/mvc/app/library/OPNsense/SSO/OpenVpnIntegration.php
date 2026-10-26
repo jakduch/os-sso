@@ -221,6 +221,24 @@ final class OpenVpnIntegration
 			}
 		}
 
+		$instances = self::openVpnInstances($config);
+		foreach ($desired as $uuid => $profile) {
+			if (!isset($instances[$uuid])) {
+				continue;
+			}
+			$instance = $instances[$uuid];
+			$tokens = trim((string)($instance->{'auth-gen-token'} ?? '')) !== '';
+			foreach (self::flags($instance) as $flag) {
+				$tokens = $tokens || preg_match('/^(?:--)?auth-gen-token(?:\s|$)/', $flag) === 1;
+			}
+			if ($tokens) {
+				$errors[] = "OpenVPN instance '{$uuid}' enables auth-gen-token, which bypasses SSO revocation; "
+					. 'clear Auth Token Lifetime before using an SSO profile';
+				$blocked[$uuid] = $profile;
+				unset($desired[$uuid]);
+			}
+		}
+
 		return [$desired, $blocked, array_values(array_unique($errors))];
 	}
 

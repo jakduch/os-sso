@@ -80,6 +80,9 @@ def saved_flags() -> dict[str, tuple[list[str], str]] | None:
     for instance in root.findall("./OPNsense/OpenVPN/Instances/Instance"):
         uuid = instance.attrib.get("uuid", "")
         flags = [flag.strip() for flag in (instance.findtext("various_flags") or "").split(",") if flag.strip()]
+        token_lifetime = (instance.findtext("auth-gen-token") or "").strip()
+        if token_lifetime:
+            flags.append("auth-gen-token " + token_lifetime)
         result[uuid] = (flags, (instance.findtext("authmode") or "").strip())
     return result
 
@@ -93,6 +96,10 @@ def process_running(pid_file: str) -> bool:
         return False
 
 
+def tokens_enabled(lines: list[str]) -> bool:
+    return any(line.split(None, 1)[0].lstrip("-") == "auth-gen-token" for line in lines if line.strip())
+
+
 def generated_config_valid(settings: dict[str, str]) -> bool:
     try:
         lines = [line.strip() for line in Path(settings["config_file"]).read_text(encoding="utf-8").splitlines()]
@@ -100,7 +107,7 @@ def generated_config_valid(settings: dict[str, str]) -> bool:
         return False
 
     auth_lines = [line for line in lines if line.startswith("auth-user-pass-verify ")]
-    return auth_lines == [settings["auth_directive"]] and settings["optional_directive"] in lines
+    return not tokens_enabled(lines) and auth_lines == [settings["auth_directive"]] and settings["optional_directive"] in lines
 
 
 def saved_config_valid(
@@ -112,7 +119,7 @@ def saved_config_valid(
         return False
     flags, authmode = instances[uuid]
     auth_flags = [flag for flag in flags if flag.startswith("auth-user-pass-verify ")]
-    return authmode == "" and auth_flags == [settings["auth_directive"]] and settings["optional_directive"] in flags
+    return not tokens_enabled(flags) and authmode == "" and auth_flags == [settings["auth_directive"]] and settings["optional_directive"] in flags
 
 
 def configctl(*arguments: str) -> subprocess.CompletedProcess[str]:

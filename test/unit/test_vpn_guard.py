@@ -92,6 +92,11 @@ class SavedFlagsTest(unittest.TestCase):
             VPN_GUARD.saved_flags(),
         )
 
+    def test_native_token_setting_is_visible_to_the_guard(self) -> None:
+        self.write_config('<opnsense><OPNsense><OpenVPN><Instances><Instance uuid="test">'
+                          '<auth-gen-token>0</auth-gen-token></Instance></Instances></OpenVPN></OPNsense></opnsense>')
+        self.assertIn("auth-gen-token 0", VPN_GUARD.saved_flags()["test"][0])
+
     @mock.patch.object(VPN_GUARD, "log")
     def test_rejects_dtd_and_entity_declarations(self, log: mock.Mock) -> None:
         self.write_config(
@@ -148,6 +153,14 @@ class RuntimeGuardTest(unittest.TestCase):
         Path(self.settings["config_file"]).write_text("\n".join(flags), encoding="utf-8")
         self.assertFalse(VPN_GUARD.generated_config_valid(self.settings))
 
+    def test_token_reconnect_cannot_bypass_revocation(self) -> None:
+        for directive in ("auth-gen-token 3600", "auth-gen-token 0", "--auth-gen-token 0"):
+            with self.subTest(directive=directive):
+                flags = self.valid_flags + [directive]
+                self.assertFalse(VPN_GUARD.saved_config_valid(self.uuid, self.settings, {self.uuid: (flags, "")}))
+                Path(self.settings["config_file"]).write_text("\n".join(flags), encoding="utf-8")
+                self.assertFalse(VPN_GUARD.generated_config_valid(self.settings))
+
     def test_conflicting_selection_stays_blocked(self) -> None:
         self.assertFalse(VPN_GUARD.saved_config_valid(self.uuid, self.settings | {"blocked": "1"}, self.instances))
 
@@ -169,6 +182,16 @@ class RuntimeGuardTest(unittest.TestCase):
             mock.call("sso", "sync_openvpn"),
             mock.call("openvpn", "restart", self.uuid),
         ], control.call_args_list)
+
+    def test_token_enabled_instance_remains_stopped(self) -> None:
+        instances = {self.uuid: (self.valid_flags + ["auth-gen-token 0"], "")}
+        result = subprocess.CompletedProcess([], 0, "PARTIAL: token authentication is blocked", "")
+        with mock.patch.object(VPN_GUARD, "configctl", return_value=result) as control, \
+             mock.patch.object(VPN_GUARD, "load_manifest", return_value=self.manifest), \
+             mock.patch.object(VPN_GUARD, "saved_flags", return_value=instances), \
+             mock.patch.object(VPN_GUARD, "log"):
+            VPN_GUARD.repair([self.uuid])
+        self.assertEqual([mock.call("openvpn", "stop", self.uuid), mock.call("sso", "sync_openvpn")], control.call_args_list)
 
     def test_failed_reconciliation_never_restarts(self) -> None:
         result = subprocess.CompletedProcess([], 1, "", "cannot save config")

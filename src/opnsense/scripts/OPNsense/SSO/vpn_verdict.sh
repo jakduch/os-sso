@@ -97,8 +97,8 @@ fi
 if [ "$MODE" != "inspect" ]; then
     printf '%s' "$VERDICT" > "$CONTROL"
 fi
-# Echo the common name the tunnel will carry back to the caller: OpenVPN keeps using the
-# name the client sent, so it is the only handle a later revocation can kill it with.
+# Return the exact client username for a later lookup in management status 3.
+# The certificate common name can differ unless username-as-common-name is enabled.
 if [ -n "$CLAIMED_USER" ]; then
     echo "ok $CLAIMED_USER"
 else

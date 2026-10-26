@@ -247,3 +247,26 @@ if (!stateDirUsable()) {
 		unlink($manifestPath);
 	}
 }
+
+T::group('OpenVpnIntegration: authentication tokens cannot bypass revocation');
+foreach (['0', '3600'] as $tokenLifetime) {
+	$instance = vpnInstance(VPN_UUID_A) + ['auth-gen-token' => $tokenLifetime];
+	$tree = vpnTree([vpnProfile('staff')], [$instance]);
+	$result = OpenVpnIntegration::reconcile($tree);
+	eq([], $result['instances'], 'token-enabled instances are not authorized, lifetime=' . $tokenLifetime);
+	truthy(str_contains(implode(' ', $result['errors']), 'bypasses SSO revocation'), 'the configuration error explains the revocation bypass');
+}
+$tree = vpnTree([vpnProfile('staff')], [vpnInstance(VPN_UUID_A, 'auth-gen-token 3600')]);
+$result = OpenVpnIntegration::reconcile($tree);
+eq([], $result['instances'], 'a custom token directive is rejected too');
+if (stateDirUsable()) {
+	\OPNsense\Core\Config::useTree($tree);
+	$manifestPath = tempnam(sys_get_temp_dir(), 'os-sso-token-manifest-');
+	try {
+		OpenVpnIntegration::synchronize($manifestPath);
+		$manifest = json_decode((string)file_get_contents($manifestPath), true);
+		eq('1', $manifest['instances'][VPN_UUID_A]['blocked'], 'a token-enabled instance remains in the guard manifest as blocked');
+	} finally {
+		unlink($manifestPath);
+	}
+}
