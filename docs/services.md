@@ -100,16 +100,25 @@ repairs the saved directives asynchronously, and the normal OpenVPN Apply hook r
 them before core generates runtime files. Invalid selections are reported without
 preventing independent valid instances from being reconciled.
 
-The supervised guard also checks the saved and generated configuration once per second.
-Repairing `config.xml` alone does not make an already running daemon safe: if its runtime
-file lacks the expected authentication hook, the guard stops the instance, reconciles the
-saved settings, and restarts only instances whose authentication can be validated.
-Conflicting selections or failed repairs remain stopped; unrelated instances are not
-restarted. Package installation starts the guard and upgrades restart it to load new code.
+After reconciliation, the configuration event inspects the generated configuration of
+running managed instances, even when the saved configuration was already repaired. It
+restarts only an instance missing its expected verifier and checks the resulting runtime
+configuration; a failed repair is stopped and reported. Healthy instances, stopped instances
+and unrelated VPNs are left alone. Overlapping event repairs are serialized.
 
-Detection is periodic, not a synchronous pre-start barrier. A restart racing a configuration
-event can run until the next guard check; the guard prevents that configuration from
-remaining active unnoticed. Keep client-certificate verification enabled.
+The supervised guard remains a fallback. Once per second it inspects generated runtime
+configuration, not the transient saved flags that an ordinary form save can remove.
+It stops an unsafe instance, reconciles saved settings, and restarts only instances whose
+authentication validates. Conflicting selections or failed repairs remain stopped. The guard
+shares the event repair lock and rechecks runtime before acting.
+
+Package installation starts the guard; upgrades reload it without stopping healthy VPNs.
+Reconciliation or guard startup errors are logged without aborting a firmware upgrade.
+Actual package removal still stops the guard and managed instances.
+
+Detection is asynchronous, not a synchronous pre-start barrier. A restart racing a
+configuration event can run until event repair or the next guard check. Keep
+client-certificate verification enabled.
 
 VPN clients must provide a non-empty username even when username matching is disabled:
 the plugin needs a named grant it can revoke. A read-only inspection validates the pending

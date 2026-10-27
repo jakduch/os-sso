@@ -2,6 +2,7 @@
 
 """Fail closed when a managed OpenVPN instance loses the os-sso auth hook."""
 
+import fcntl
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 
 MANIFEST = Path("/usr/local/etc/sso/openvpn-instances.json")
 CONFIG_XML = Path("/conf/config.xml")
+RUNTIME_LOCK = Path("/var/db/os-sso/run/openvpn-runtime.lock")
 CONFIG_XML_MAX_BYTES = 16 * 1024 * 1024
 UUID = re.compile(r"^[0-9a-f-]{36}$")
 CHECK_INTERVAL = 1.0
@@ -161,13 +163,32 @@ def repair(uuids: list[str]) -> None:
         log(f"repaired and restarted managed OpenVPN instance {uuid}")
 
 
+def repair_serialized(uuids: list[str], fallback_manifest: dict[str, dict[str, str]] | None = None) -> None:
+    try:
+        descriptor = os.open(RUNTIME_LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return  # the configuration event is already repairing runtime
+            manifest = load_manifest()
+            if manifest is None:
+                manifest = fallback_manifest or {}
+            # Recheck after locking: an event may have fixed it since the poll.
+            unsafe = [uuid for uuid in uuids if uuid in manifest
+                      and process_running(manifest[uuid]["pid_file"])
+                      and not generated_config_valid(manifest[uuid])]
+            if unsafe:
+                repair(unsafe)
+    except OSError as exception:
+        log(f"cannot serialize runtime repair: {exception}", syslog.LOG_ERR)
+
+
 def main() -> None:
     syslog.openlog("os-sso-vpn-guard", facility=syslog.LOG_AUTH)
     last_repair = 0.0
     last_problem: tuple[str, ...] = ()
     last_manifest: dict[str, dict[str, str]] = {}
-    config_stamp: tuple[int, int] | None = None
-    config_instances: dict[str, tuple[list[str], str]] | None = {}
 
     while True:
         manifest = load_manifest()
@@ -180,23 +201,11 @@ def main() -> None:
             if manifest is None:
                 manifest = last_manifest
         last_manifest = manifest
-        if manifest:
-            try:
-                stat = CONFIG_XML.stat()
-                current_stamp = (stat.st_mtime_ns, stat.st_size)
-            except OSError:
-                current_stamp = None
-            if current_stamp != config_stamp:
-                config_instances = saved_flags()
-                config_stamp = current_stamp
-        else:
-            config_instances = {}
-            config_stamp = None
         unsafe = []
         for uuid, settings in manifest.items():
             if not process_running(settings["pid_file"]):
                 continue
-            if not saved_config_valid(uuid, settings, config_instances) or not generated_config_valid(settings):
+            if not generated_config_valid(settings):
                 unsafe.append(uuid)
 
         problem = tuple(sorted(unsafe))
@@ -206,7 +215,7 @@ def main() -> None:
                 f"stopping OpenVPN instance(s) without enforced os-sso authentication: {', '.join(problem)}",
                 syslog.LOG_WARNING,
             )
-            repair(list(problem))
+            repair_serialized(list(problem), manifest)
             last_repair = now
         last_problem = problem
         time.sleep(CHECK_INTERVAL)

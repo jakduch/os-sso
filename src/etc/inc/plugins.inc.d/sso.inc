@@ -23,11 +23,17 @@ function sso_openvpn_sync(): void
 		if ($result['changed']) {
 			syslog(LOG_NOTICE, 'os-sso: restored managed OpenVPN web-auth directives');
 		}
+		foreach ($result['errors'] as $error) {
+			$detail = str_replace(["\r", "\n"], ' ', $error);
+			syslog(LOG_ERR, 'os-sso: OpenVPN integration skipped an invalid selection: ' . $detail);
+		}
 	} catch (\Throwable $exception) {
 		/*
-		 * Never abort core's CRL hook. The guard manifest is written before the
-		 * config save, so the supervisor stops any selected instance whose saved
-		 * or generated configuration cannot be proven safe.
+		 * Log, never rethrow. plugins_configure() only catches \Error, so an exception
+		 * escaping here kills the whole run: at boot that is rc.bootup, and every
+		 * bootup hook after this one (unbound, ...) never runs. The directives already
+		 * in config.xml stay as they were, and the config syshook retries on the next
+		 * save.
 		 */
 		syslog(LOG_ERR, 'os-sso: OpenVPN integration failed: ' . $exception->getMessage());
 	}
