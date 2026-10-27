@@ -16,6 +16,11 @@ the configured issuer to match the metadata exactly. End existing SSO sessions
 and sign in again for providers with a trailing slash, so their session records
 use the exact issuer for back-channel logout.
 
+The fork keeps exact discovery issuer matching. Upstream's compatibility allowance
+for a single trailing-slash difference is deliberately not enabled here; configure the
+exact value from discovery instead. This keeps the configured issuer identity consistent
+with the issuer accepted at login and recorded for revocation.
+
 ## Client authentication
 
 `auto` picks `client_secret_basic` or `client_secret_post` from the discovery document.
