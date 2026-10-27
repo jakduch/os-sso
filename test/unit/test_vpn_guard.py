@@ -118,6 +118,8 @@ class RuntimeGuardTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
+        self.original_runtime_lock = VPN_GUARD.RUNTIME_LOCK
+        VPN_GUARD.RUNTIME_LOCK = Path(self.temporary.name) / "runtime.lock"
         self.uuid = "11111111-1111-4111-8111-111111111111"
         self.settings = {
             "profile": "staff",
@@ -131,6 +133,7 @@ class RuntimeGuardTest(unittest.TestCase):
         self.instances = {self.uuid: (self.valid_flags, "")}
 
     def tearDown(self) -> None:
+        VPN_GUARD.RUNTIME_LOCK = self.original_runtime_lock
         self.temporary.cleanup()
 
     def test_repaired_saved_config_does_not_hide_unsafe_runtime(self) -> None:
@@ -146,6 +149,49 @@ class RuntimeGuardTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "one iteration"):
                 VPN_GUARD.main()
             repair.assert_called_once_with([self.uuid])
+
+    def test_form_save_with_a_healthy_runtime_never_stops_users(self) -> None:
+        Path(self.settings["config_file"]).write_text("\n".join(self.valid_flags), encoding="utf-8")
+        with mock.patch.object(VPN_GUARD, "load_manifest", return_value=self.manifest), \
+             mock.patch.object(VPN_GUARD, "process_running", return_value=True), \
+             mock.patch.object(VPN_GUARD, "saved_flags", return_value={self.uuid: ([], "")}), \
+             mock.patch.object(VPN_GUARD, "repair") as repair, \
+             mock.patch.object(VPN_GUARD.time, "sleep", side_effect=RuntimeError("one iteration")):
+            with self.assertRaisesRegex(RuntimeError, "one iteration"):
+                VPN_GUARD.main()
+            repair.assert_not_called()
+
+    def test_an_event_already_holding_runtime_lock_prevents_duplicate_repair(self) -> None:
+        Path(self.settings["config_file"]).write_text("dev tun\n", encoding="utf-8")
+        with VPN_GUARD.RUNTIME_LOCK.open("a") as lock:
+            VPN_GUARD.fcntl.flock(lock, VPN_GUARD.fcntl.LOCK_EX | VPN_GUARD.fcntl.LOCK_NB)
+            with mock.patch.object(VPN_GUARD, "repair") as repair:
+                VPN_GUARD.repair_serialized([self.uuid])
+                repair.assert_not_called()
+
+    def test_runtime_is_rechecked_after_waiting_for_an_event(self) -> None:
+        Path(self.settings["config_file"]).write_text("\n".join(self.valid_flags), encoding="utf-8")
+        with mock.patch.object(VPN_GUARD, "load_manifest", return_value=self.manifest), \
+             mock.patch.object(VPN_GUARD, "process_running", return_value=True), \
+             mock.patch.object(VPN_GUARD, "repair") as repair:
+            VPN_GUARD.repair_serialized([self.uuid])
+            repair.assert_not_called()
+
+    def test_missing_manifest_does_not_forget_the_last_known_unsafe_instance(self) -> None:
+        Path(self.settings["config_file"]).write_text("dev tun\n", encoding="utf-8")
+        with mock.patch.object(VPN_GUARD, "load_manifest", return_value=None), \
+             mock.patch.object(VPN_GUARD, "process_running", return_value=True), \
+             mock.patch.object(VPN_GUARD, "repair") as repair:
+            VPN_GUARD.repair_serialized([self.uuid], self.manifest)
+            repair.assert_called_once_with([self.uuid])
+
+    def test_a_removed_selection_is_not_repaired_from_stale_manifest(self) -> None:
+        Path(self.settings["config_file"]).write_text("dev tun\n", encoding="utf-8")
+        with mock.patch.object(VPN_GUARD, "load_manifest", return_value={}), \
+             mock.patch.object(VPN_GUARD, "process_running", return_value=True), \
+             mock.patch.object(VPN_GUARD, "repair") as repair:
+            VPN_GUARD.repair_serialized([self.uuid], self.manifest)
+            repair.assert_not_called()
 
     def test_second_password_verifier_is_not_safe(self) -> None:
         flags = self.valid_flags + ['auth-user-pass-verify "/other/verifier" via-env']

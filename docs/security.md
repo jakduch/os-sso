@@ -118,13 +118,14 @@ credentials (LDAP bind passwords and the like) and are never written to logs.
 The local password (+ native TOTP) always stays active as a **break-glass** path: keep at
 least one local admin.
 
-For a managed OpenVPN profile, os-sso owns the instance's deferred-auth directive and a
-supervised guard verifies the saved and generated configuration once per second. A managed
-instance is stopped if the directive disappears or another password verifier appears
-alongside it; it is restarted only after its own authentication settings validate. The configuration
-event is asynchronous, so the guard is a periodic mitigation, not a synchronous pre-start
-barrier. New VPN logins fail when
-the IdP is unavailable. Existing tunnels remain subject to the recorded session lifetime and revocation.
+For a managed OpenVPN profile, os-sso owns the instance's deferred-auth directive.
+After reconciling saved settings, configuration events inspect running managed instances
+and restart only those whose generated configuration lost the expected verifier. A supervised
+guard also checks generated configuration once per second, using the same repair lock.
+A temporary omission in saved flags during an ordinary form save does not stop a healthy
+runtime. Failed runtime repairs are stopped and reported. These asynchronous checks are
+not a synchronous pre-start barrier. New VPN logins fail when the IdP is unavailable.
+Existing tunnels remain subject to the recorded session lifetime and revocation.
 Managed SSO instances refuse native OpenVPN authentication tokens, as described below.
 
 [SCIM](scim.md) needs a bearer token **and** a source-address allowlist, and refuses on the

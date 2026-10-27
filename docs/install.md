@@ -110,6 +110,17 @@ OpenVPN instance; their saved directives deliberately remain so a manual restart
 silently fall back to certificate-only access. Files below `/var/db/os-sso*` are runtime
 sessions, caches and locks, not durable configuration, and may be recreated or lost.
 
+For an in-place package upgrade (`PKG_UPGRADE=true`), the removal hook leaves healthy
+VPNs and the guard running. Post-install reconciles saved settings, selectively repairs
+unsafe running instances, then reloads the guard. Plugin failures are logged and do not
+abort the firmware/package upgrade; inspect the os-sso logs and service health afterwards.
+
+**First upgrade from an older package:** pkg can execute the removal hook embedded in
+the old package. Updating these scripts cannot retroactively replace that hook; an older
+hook can still stop managed VPNs during that first transition. Use a maintenance window
+and explicitly check/restart the intended instances afterwards. Subsequent upgrades use
+the corrected lifecycle. A stopped instance is never automatically started by runtime repair.
+
 ## Remove the third-party repository
 
 Removing the repository does not uninstall the plugin:
