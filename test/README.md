@@ -29,6 +29,30 @@ docker run --rm -v "$PWD/..:/w" -w /w php:8.3-cli php test/unit/run.php
 vagrant ssh -c 'cd /home/vagrant/os-sso && sudo php test/unit/run.php'
 ```
 
+## Automated security checks
+
+The `Test` workflow runs the PHP 8.3/8.5 unit suites, Python guard/revocation tests,
+package/repository shell tests and concurrent writes against pinned OPNsense core
+versions. These include native WebGUI session establishment in separate PHP processes.
+
+The `Security` workflow runs for pull requests, main-branch pushes and weekly, and can
+also be started manually. It runs Semgrep Community Edition on first-party PHP/Python
+and CodeQL's extended security queries on Python and GitHub Actions. Both publish SARIF
+findings into the repository's **Security → Code scanning** page and PR checks. Semgrep
+findings still fail its scan step; publishing results does not hide a failed scan.
+CodeQL does not support PHP. Dependency Review rejects new dependencies with known
+vulnerabilities at low severity or above. Composer's locked-dependency audit remains in
+`Test`. Dependabot security updates, secret scanning and secret push protection are
+repository settings; a workflow file alone does not enable those settings.
+
+These tools require no paid service for this public repository on standard GitHub-hosted
+runners. They can miss vulnerabilities, especially framework-specific data flow. Psalm
+`--taint-analysis` is a useful further PHP check, but needs the OPNsense/Phalcon request
+and backend boundaries modelled before a clean result can be treated as meaningful.
+
+The OPNsense VM/browser suites below remain a separate lab step. Static code scanning
+and unit success do not substitute for running real VPN, portal and HA tests.
+
 ## Bringing the lab up
 
 `vagrant up` is self-contained: it pushes the source over SCP and deploys the plugin into

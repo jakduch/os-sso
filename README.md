@@ -147,7 +147,7 @@ Docker), plus the translation template:
 [docs/development.md](docs/development.md), [`test/`](test/).
 
 ```sh
-php test/unit/run.php    # ~590 assertions, no setup
+php test/unit/run.php    # assertions requiring state access report skips when unavailable
 ```
 
 ## License

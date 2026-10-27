@@ -1,0 +1,5 @@
+name: os-sso first-party code
+
+paths-ignore:
+  - src/opnsense/mvc/app/library/OPNsense/SSO/vendor/**
+  - test/**
