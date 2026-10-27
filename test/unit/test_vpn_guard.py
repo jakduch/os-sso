@@ -193,6 +193,27 @@ class RuntimeGuardTest(unittest.TestCase):
             VPN_GUARD.repair_serialized([self.uuid], self.manifest)
             repair.assert_not_called()
 
+    def test_alternate_verifier_syntax_cannot_hide_a_second_verifier(self) -> None:
+        for directive in ('auth-user-pass-verify\t"/other/verifier" via-env',
+                          '--auth-user-pass-verify "/other/verifier" via-env',
+                          'auth-user-pass-verify'):
+            with self.subTest(directive=directive):
+                flags = self.valid_flags + [directive]
+                self.assertFalse(VPN_GUARD.saved_config_valid(self.uuid, self.settings, {self.uuid: (flags, "")}))
+                Path(self.settings["config_file"]).write_text("\n".join(flags), encoding="utf-8")
+                self.assertFalse(VPN_GUARD.generated_config_valid(self.settings))
+
+    def test_repair_lock_symlink_is_refused_without_modifying_its_target(self) -> None:
+        target = Path(self.temporary.name) / "target"
+        target.write_text("preserve this file", encoding="utf-8")
+        VPN_GUARD.RUNTIME_LOCK.symlink_to(target)
+        with mock.patch.object(VPN_GUARD, "repair") as repair, \
+             mock.patch.object(VPN_GUARD, "log") as log:
+            VPN_GUARD.repair_serialized([self.uuid], self.manifest)
+            repair.assert_not_called()
+            self.assertIn("cannot serialize runtime repair", log.call_args.args[0])
+        self.assertEqual("preserve this file", target.read_text(encoding="utf-8"))
+
     def test_second_password_verifier_is_not_safe(self) -> None:
         flags = self.valid_flags + ['auth-user-pass-verify "/other/verifier" via-env']
         self.assertFalse(VPN_GUARD.saved_config_valid(self.uuid, self.settings, {self.uuid: (flags, "")}))

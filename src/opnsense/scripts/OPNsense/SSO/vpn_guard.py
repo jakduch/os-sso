@@ -102,13 +102,19 @@ def tokens_enabled(lines: list[str]) -> bool:
     return any(line.split(None, 1)[0].lstrip("-") == "auth-gen-token" for line in lines if line.strip())
 
 
+def verifier_directives(lines: list[str]) -> list[str]:
+    # Match the same directive spellings as the event-driven PHP validator.
+    # Exact comparison below still requires the one canonical managed verifier.
+    return [line for line in lines if re.match(r"^(?:--)?auth-user-pass-verify(?:\s|$)", line)]
+
+
 def generated_config_valid(settings: dict[str, str]) -> bool:
     try:
         lines = [line.strip() for line in Path(settings["config_file"]).read_text(encoding="utf-8").splitlines()]
     except OSError:
         return False
 
-    auth_lines = [line for line in lines if line.startswith("auth-user-pass-verify ")]
+    auth_lines = verifier_directives(lines)
     return not tokens_enabled(lines) and auth_lines == [settings["auth_directive"]] and settings["optional_directive"] in lines
 
 
@@ -120,7 +126,7 @@ def saved_config_valid(
     if settings.get("blocked") == "1" or instances is None or uuid not in instances:
         return False
     flags, authmode = instances[uuid]
-    auth_flags = [flag for flag in flags if flag.startswith("auth-user-pass-verify ")]
+    auth_flags = verifier_directives(flags)
     return not tokens_enabled(flags) and authmode == "" and auth_flags == [settings["auth_directive"]] and settings["optional_directive"] in flags
 
 
