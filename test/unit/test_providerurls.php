@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+/*
+ * Copyright (C) 2026 Maxime Wewer
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
 use OPNsense\SSO\Api\DiagnosticsController;
 use OPNsense\SSO\Protocol\OidcProtocol;
 
