@@ -56,7 +56,7 @@ The same workflow also runs these account-free CLI tools:
   those assumptions before every scan. No taint baseline suppresses production findings.
 - **Gitleaks CLI** scans all fetched Git history, with fully redacted SARIF reports.
   `.gitleaks.toml` keeps default rules and narrowly exempts only a public verification-key
-  hash and the local lab issuer URL in their specific files. A temporary-repository test
+  hash and the local lab issuer URL in their original files and the scanner self-test. A temporary-repository test
   verifies that adjacent synthetic tokens are detected even after a later commit removes
   them. These exceptions never exclude a complete test directory or commit.
 - **Trivy** scans the runtime Composer lock against its current advisory database,

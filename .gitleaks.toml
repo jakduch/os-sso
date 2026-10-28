@@ -7,7 +7,7 @@ useDefault = true
 description = "Public package-signing key SHA-256, not a credential"
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['''^repository/bootstrap\.sh$''']
+paths = ['''^(repository/bootstrap\.sh|test/security/check_gitleaks\.py)$''']
 regexTarget = "secret"
 regexes = ['''^3efc7a48172fb2f5efe0249de9064c771b902876e43332af28871a04b8b486e7$''']
 
@@ -15,7 +15,7 @@ regexes = ['''^3efc7a48172fb2f5efe0249de9064c771b902876e43332af28871a04b8b486e7$
 description = "Published local Authentik fixture issuer URL, not the adjacent client secret"
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['''^test/idp/authentik/setup\.sh$''']
+paths = ['''^(test/idp/authentik/setup\.sh|test/security/check_gitleaks\.py)$''']
 # The generic rule extracts the port/path portion of this public URL.
 regexTarget = "secret"
 regexes = ['''^9443/application/o/opnsense/?$''']
