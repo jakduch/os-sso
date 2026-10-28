@@ -1,0 +1,21 @@
+title = "os-sso secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public package-signing key SHA-256, not a credential"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^repository/bootstrap\.sh$''']
+regexTarget = "secret"
+regexes = ['''^3efc7a48172fb2f5efe0249de9064c771b902876e43332af28871a04b8b486e7$''']
+
+[[allowlists]]
+description = "Published local Authentik fixture issuer URL, not the adjacent client secret"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^test/idp/authentik/setup\.sh$''']
+# The generic rule extracts the port/path portion of this public URL.
+regexTarget = "secret"
+regexes = ['''^9443/application/o/opnsense/?$''']

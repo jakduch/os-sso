@@ -1,0 +1,83 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Phalcon\Http {
+	class Request
+	{
+		/** @psalm-taint-source input */
+		public function get(string $name, mixed $filters = null, mixed $defaultValue = null): mixed {}
+
+
+		/** @psalm-taint-source input */
+		public function getRawBody(): string {}
+
+
+		public function isPost(): bool {}
+
+
+		public function isOptions(): bool {}
+	}
+
+	class Response
+	{
+		/** @psalm-taint-sink header $value */
+		public function setHeader(string $name, string $value): self {}
+
+
+		/** @psalm-taint-sink header $location */
+		public function redirect(string $location, bool $externalRedirect = false, int $statusCode = 302): self {}
+
+
+		/** @psalm-taint-sink html $content */
+		public function setContent(string $content): self {}
+
+
+		public function setStatusCode(int $code, ?string $message = null): self {}
+
+
+		public function setContentType(string $contentType, ?string $charset = null): self {}
+	}
+}
+
+namespace OPNsense\Base {
+	class ApiControllerBase
+	{
+		public \Phalcon\Http\Request $request;
+		public \Phalcon\Http\Response $response;
+		public \OPNsense\Mvc\Session $session;
+	}
+
+	class ApiMutableModelControllerBase extends ApiControllerBase {}
+	class IndexControllerBase extends ApiControllerBase {}
+	class IndexController extends ApiControllerBase {}
+	class BaseModel {}
+	class BaseModelMigration {}
+}
+
+namespace OPNsense\Mvc {
+	class Session
+	{
+		public function get(string $name, mixed $defaultValue = null): mixed {}
+
+
+		public function set(string $name, mixed $value): void {}
+	}
+}
+
+namespace OPNsense\Auth {
+	class Local {}
+	interface IAuthConnector {}
+}
+
+namespace OPNsense\Auth\SSOProviders {
+	interface ISSOContainer {}
+}
+
+namespace OPNsense\Core {
+	class Backend
+	{
+		/** @psalm-taint-sink shell $action */
+		public function configdpRun(string $action, array $params = [], bool $detach = false, int $timeout = 30, int $connectTimeout = 5): string {}
+	}
+}

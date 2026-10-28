@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 /*
  * Copyright (C) 2026 Maxime Wewer
  * SPDX-License-Identifier: BSD-2-Clause
@@ -27,6 +29,8 @@ final class ReturnUrl
      *   - '//host', which is protocol-relative and goes off-site;
      *   - '/\host', because browsers fold '\' to '/' and it resolves the same way;
      *   - CR, LF and TAB, which is header splitting once this reaches a Location.
+     *
+     * @psalm-taint-escape header
      */
     public static function sanitize(string $url): string
     {

@@ -45,10 +45,33 @@ vulnerabilities at low severity or above. Composer's locked-dependency audit rem
 `Test`. Dependabot security updates, secret scanning and secret push protection are
 repository settings; a workflow file alone does not enable those settings.
 
-These tools require no paid service for this public repository on standard GitHub-hosted
-runners. They can miss vulnerabilities, especially framework-specific data flow. Psalm
-`--taint-analysis` is a useful further PHP check, but needs the OPNsense/Phalcon request
-and backend boundaries modelled before a clean result can be treated as meaningful.
+The same workflow also runs these account-free CLI tools:
+
+- **Psalm taint analysis** scans first-party PHP libraries, controllers, models and scripts.
+  `security/framework.phpstub` models Phalcon request values/raw bodies as untrusted input,
+  response headers/content as sinks, and configd action names as command sinks. Structured
+  backend arguments are quoted by core; they are not modelled as raw shell commands.
+  The reviewed `ReturnUrl::sanitize()` contract removes only header taint. It does not make
+  a value safe for HTML. Five deliberately unsafe flows and three safe controls verify
+  those assumptions before every scan. No taint baseline suppresses production findings.
+- **Gitleaks CLI** scans all fetched Git history, with fully redacted SARIF reports.
+  `.gitleaks.toml` keeps default rules and narrowly exempts only a public verification-key
+  hash and the local lab issuer URL in their specific files. A temporary-repository test
+  verifies that adjacent synthetic tokens are detected even after a later commit removes
+  them. These exceptions never exclude a complete test directory or commit.
+- **Trivy** scans the runtime Composer lock against its current advisory database,
+  including transitive dependencies, and fails on known vulnerabilities at low severity
+  or above. It complements Composer audit and Dependency Review.
+
+All reports are published to **Security → Code scanning**, including when a scan finds an
+issue and fails. Tools are pinned in `security/tools.json`; `security/install_tool.py`
+verifies each release asset's SHA-256 before extracting only its expected executable.
+Update the version, URL and reviewed digest together when upgrading a scanner. No scanner
+account, API token or paid service is required on this public repository's standard runners.
+
+The framework model is focused on HTTP-to-output/backend taint paths. Other core services,
+magic model fields, protocol validation and authorization decisions still need regression
+and appliance tests. A zero-result scan is not proof that the plugin has no vulnerabilities.
 
 The OPNsense VM/browser suites below remain a separate lab step. Static code scanning
 and unit success do not substitute for running real VPN, portal and HA tests.
