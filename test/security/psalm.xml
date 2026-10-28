@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<psalm xmlns="https://getpsalm.org/schema/config" errorLevel="8" phpVersion="8.3" resolveFromConfigFile="false" autoloader="test/security/autoload.php" cacheDirectory="/tmp/os-sso-psalm-cache">
+    <projectFiles>
+        <directory name="src/opnsense/scripts/OPNsense/SSO" />
+        <directory name="src/opnsense/mvc/app/library/OPNsense/SSO" />
+        <directory name="src/opnsense/mvc/app/library/OPNsense/Auth" />
+        <directory name="src/opnsense/mvc/app/controllers/OPNsense/SSO" />
+        <directory name="src/opnsense/mvc/app/models/OPNsense/SSO" />
+        <ignoreFiles>
+            <directory name="src/opnsense/mvc/app/library/OPNsense/SSO/vendor" />
+        </ignoreFiles>
+    </projectFiles>
+    <stubs>
+        <file name="test/security/framework.phpstub" />
+    </stubs>
+</psalm>

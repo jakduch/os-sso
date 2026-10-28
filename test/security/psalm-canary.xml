@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<psalm xmlns="https://getpsalm.org/schema/config" errorLevel="8" phpVersion="8.3" resolveFromConfigFile="false" autoloader="test/security/autoload.php" cacheDirectory="/tmp/os-sso-psalm-canary-cache">
+    <projectFiles>
+        <directory name="test/security/canaries" />
+        <file name="src/opnsense/mvc/app/library/OPNsense/SSO/ReturnUrl.php" />
+    </projectFiles>
+    <stubs>
+        <file name="test/security/framework.phpstub" />
+    </stubs>
+</psalm>

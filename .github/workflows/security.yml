@@ -35,8 +35,8 @@ jobs:
             semgrep/semgrep@sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b \
             semgrep scan --config p/security-audit --config p/php --config p/python \
             --exclude 'src/opnsense/mvc/app/library/OPNsense/SSO/vendor/**' \
-            --exclude 'test/**' --error --metrics=off \
-            --sarif --output reports/semgrep.sarif src
+            --exclude 'test/security/canaries/**' --error --metrics=off \
+            --sarif --output reports/semgrep.sarif src test/security
 
       - name: Publish alerts to GitHub Security
         if: ${{ !cancelled() && hashFiles('reports/semgrep.sarif') != '' }}
@@ -83,3 +83,109 @@ jobs:
         with:
           fail-on-severity: low
           comment-summary-in-pr: never
+
+  psalm:
+    name: Psalm PHP taint analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: "8.3"
+          extensions: curl, dom, gettext, mbstring, openssl, simplexml, xml
+          coverage: none
+
+      - name: Install locked runtime dependencies
+        working-directory: src/opnsense/mvc/app/library/OPNsense/SSO
+        run: composer install --no-dev --no-interaction --classmap-authoritative --no-scripts --no-plugins
+
+      - name: Install verified Psalm
+        run: python3 test/security/install_tool.py psalm --directory "$RUNNER_TEMP/os-sso-security"
+
+      - name: Verify the framework taint model
+        run: python3 test/security/check_psalm.py "$RUNNER_TEMP/os-sso-security/psalm.phar"
+
+      - name: Analyze first-party PHP
+        run: |
+          mkdir -p reports
+          php "$RUNNER_TEMP/os-sso-security/psalm.phar" \
+            --config=test/security/psalm.xml --taint-analysis --threads=1 --no-cache \
+            --report=reports/psalm.sarif
+
+      - name: Publish PHP taint alerts
+        if: ${{ !cancelled() && hashFiles('reports/psalm.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          sarif_file: reports/psalm.sarif
+          category: psalm-taint
+
+  gitleaks:
+    name: Gitleaks complete history
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install verified Gitleaks CLI
+        run: python3 test/security/install_tool.py gitleaks --directory "$RUNNER_TEMP/os-sso-security"
+
+      - name: Verify secret detection and narrow fixture exceptions
+        run: python3 test/security/check_gitleaks.py "$RUNNER_TEMP/os-sso-security/gitleaks"
+
+      - name: Scan all fetched Git history
+        run: |
+          mkdir -p reports
+          "$RUNNER_TEMP/os-sso-security/gitleaks" git --log-opts=--all \
+            --config=.gitleaks.toml --redact=100 --no-banner --log-level=error \
+            --report-format=sarif --report-path=reports/gitleaks.sarif .
+
+      - name: Publish redacted secret alerts
+        if: ${{ !cancelled() && hashFiles('reports/gitleaks.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          sarif_file: reports/gitleaks.sarif
+          category: gitleaks-history
+
+  trivy:
+    name: Trivy Composer vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install verified Trivy CLI
+        run: python3 test/security/install_tool.py trivy --directory "$RUNNER_TEMP/os-sso-security"
+
+      - name: Scan runtime Composer lock against current advisories
+        run: |
+          mkdir -p reports
+          "$RUNNER_TEMP/os-sso-security/trivy" fs --scanners vuln \
+            --severity LOW,MEDIUM,HIGH,CRITICAL --exit-code 1 \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --skip-dirs vendor \
+            --format sarif --output reports/trivy.sarif \
+            src/opnsense/mvc/app/library/OPNsense/SSO
+
+      - name: Publish dependency alerts
+        if: ${{ !cancelled() && hashFiles('reports/trivy.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
+        with:
+          sarif_file: reports/trivy.sarif
+          category: trivy-composer
