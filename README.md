@@ -20,12 +20,15 @@ break-glass path.
 
 ## Features
 
-- **OpenID Connect** - discovery, PKCE, pushed authorization requests, JWKS rotation, and
-  client authentication beyond the shared secret: `client_secret_jwt`, `private_key_jwt`
-  or mutual TLS. Keycloak, Authentik, Entra ID, Zitadel, … → [docs](docs/oidc.md)
+- **OpenID Connect** - discovery, PKCE, pushed authorization requests, signed request
+  objects (JAR, by value or by reference) and signed responses (JARM), DPoP-bound codes
+  and access tokens, requested claims,
+  JWKS rotation, and client authentication beyond the shared secret: `client_secret_jwt`,
+  `private_key_jwt` or mutual TLS. The response issuer (RFC 9207) and token types
+  (RFC 8725) are checked. Keycloak, Authentik, Entra ID, Zitadel, … → [docs](docs/oidc.md)
 - **SAML 2.0** - signed (RSA-SHA256; SHA-1 refused) and optionally encrypted assertions,
-  metadata import and generation, signed AuthnRequests, Single Logout over either
-  binding. → [docs](docs/saml.md)
+  metadata import and generation (optionally signed, for federations), signed
+  AuthnRequests, Single Logout over either binding. → [docs](docs/saml.md)
 - **JWT forward-auth** - trust a signed JWT from a reverse proxy in front of OPNsense
   (oauth2-proxy, Authelia, Authentik forward-auth, Cloudflare Access). → [docs](docs/jwt.md)
 - **Three doors** - a login button per provider on the WebGUI page, the same on the
@@ -38,11 +41,12 @@ break-glass path.
 - **Group mapping** - IdP groups become OPNsense group membership; privileges are resolved
   by the normal ACL. Reads nested claims (`resource_access.<client>.roles`) and follows
   Entra's group-overage pointer.
-- **Single Logout** - a revocation from any side (back-channel logout, SLO, SCIM, an
-  administrator) ends the WebGUI session, disconnects the portal client and drops the VPN
-  tunnel. → [docs](docs/security.md#revocation-reaches-all-three-doors)
+- **Single Logout** - a revocation from any side (back-channel or front-channel logout -
+  the only kind Entra ID offers -, SLO, SCIM, an administrator) ends the WebGUI session,
+  disconnects the portal client and drops the VPN tunnel. → [docs](docs/security.md#revocation-reaches-all-three-doors)
 - **SCIM 2.0 provisioning** - the IdP pushes account lifecycle, so a revoked user is
-  disabled when the directory says so, not at their next login attempt. → [docs](docs/scim.md)
+  disabled when the directory says so, not at their next login attempt. Groups the
+  directory pushes can be created on demand, with no privilege. → [docs](docs/scim.md)
 - **HA configuration sync** - exposes the plugin's profiles to OPNsense XMLRPC sync and
   reconfigures the guard and OpenVPN on the backup. → [docs](docs/high-availability.md)
 

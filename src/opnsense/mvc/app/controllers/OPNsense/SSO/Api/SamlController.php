@@ -114,7 +114,11 @@ class SamlController extends ApiControllerBase
                 // no InResponseTo at all and is only accepted when the provider named
                 // on our own per-provider ACS URL opted into it.
                 $provider = $this->knownSamlProvider((string)($this->request->get('provider') ?? ''));
-                if ($inResponseTo !== '' || $provider === '' || empty($this->authServer($provider)->ssoAllowIdpInitiated)) {
+                if (
+                    $inResponseTo !== ''
+                    || $provider === ''
+                    || empty($this->authServer($provider)->ssoAllowIdpInitiated)
+                ) {
                     throw new \RuntimeException('unknown or replayed SAML response');
                 }
                 $inResponseTo = '';
@@ -474,7 +478,11 @@ class SamlController extends ApiControllerBase
                 $idp['x509_signing'] = $meta['x509_signing'];
             }
         }
-        if ($idp['entity_id'] === '' || $idp['sso_url'] === '' || ($idp['x509'] === '' && empty($idp['x509_signing']))) {
+        if (
+            $idp['entity_id'] === ''
+            || $idp['sso_url'] === ''
+            || ($idp['x509'] === '' && empty($idp['x509_signing']))
+        ) {
             throw new \RuntimeException(
                 'SAML provider is incomplete: set an IdP metadata URL, or fill the ' .
                 'IdP EntityID, SSO URL and x509 certificate by hand'
@@ -517,6 +525,7 @@ class SamlController extends ApiControllerBase
             'allow_sha1' => (bool)$auth->ssoAllowSha1,
             'authn_post_binding' => (bool)$auth->ssoAuthnPostBinding,
             'authn_requests_signed' => (bool)$auth->ssoAuthnRequestsSigned,
+            'sign_metadata' => (bool)$auth->ssoSignMetadata,
             'force_authn' => (bool)$auth->ssoForceAuthn,
             'max_age' => (int)$auth->ssoMaxAge,
             'required_acr' => (array)$auth->ssoRequiredAcr,

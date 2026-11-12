@@ -56,8 +56,12 @@ not_live(){ authed "$1" && ko "$2 (session still authenticated)" || ok "$2"; }
 login() {
     python3 lib/idp_login.py --gui "$GUI" --provider "$PROVIDER" \
         --protocol oidc --idp "$IDP" --user "$IDP_USER" --password "$IDP_PASS" \
-        --jar "$1" | tail -1
+        --jar "$1" "${@:2}" | tail -1
 }
+# The Keycloak admin password the container was started with (test/idp/keycloak/.env).
+kc_admin_password() { docker exec keycloak printenv KC_BOOTSTRAP_ADMIN_PASSWORD 2>/dev/null; }
+# Set provider fields from a JSON object (JSON and PEM values survive the nested quoting).
+asjson() { vm "php /home/vagrant/os-sso/test/vagrant/set_authserver_json.php $PROVIDER b64:$(printf '%s' "$1" | base64 | tr -d '\n')" >/dev/null; }
 
 echo "=== os-sso OIDC end-to-end ($GUI, idp=$IDP, provider=$PROVIDER) ==="
 
@@ -66,6 +70,16 @@ vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
 echo ">>> case 1: full browser login"
 check "callback -> 302" 302 "$(login "$W/jar")"
 is_live "$W/jar" "session reaches an authenticated API"
+
+# --- 1b. the response names its issuer (RFC 9207) ------------------------------
+# A mix-up attack swaps one IdP's response for another's. Keycloak sends iss and says so
+# in its discovery document, so a response naming another issuer, or none, is refused.
+echo ">>> case 1b: the authorization response names its issuer (RFC 9207)"
+vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+check "a response naming another issuer is refused" 400 \
+    "$(login "$W/jar-iss1" --callback-param iss=https://evil.example/realms/opnsense)"
+check "a response with its iss stripped is refused" 400 \
+    "$(login "$W/jar-iss2" --callback-param iss=)"
 
 # --- 2. the authorization request ---------------------------------------------
 echo ">>> case 2: authorization request parameters"
@@ -271,6 +285,165 @@ check "garbage logout_token refused" 400 \
     "$(curl -sk -o /dev/null -w '%{http_code}' -d 'logout_token=not-a-jwt' "$GUI/api/sso/oidc/backchannel?provider=$PROVIDER")"
 check "no logout_token refused" 400 \
     "$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$GUI/api/sso/oidc/backchannel?provider=$PROVIDER")"
+
+# --- 2b. requested claims (the OIDC claims parameter) -----------------------------
+# Keycloak's fw_role mapper (setup-keycloak.sh) answers an essential fw_role claim
+# requested with a value. Read the groups from it and require that value: the login then
+# passes only if the claims request reached the IdP and its answer came back.
+if [ "$IDP" = "keycloak" ]; then
+    echo ">>> case 2b: requested claims (claims parameter)"
+    asjson '{"sso_groups_claim":"fw_role","sso_required_groups":"fw-claims-ok","sso_claims_request":"{\"id_token\":{\"fw_role\":{\"essential\":true,\"value\":\"fw-claims-ok\"}}}"}'
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    check "the requested claim satisfies the group gate" 302 "$(login "$W/jar-claims1")"
+    asjson '{"sso_claims_request":""}'
+    check "without the claims request it is not there" 400 "$(login "$W/jar-claims2")"
+    asjson '{"sso_groups_claim":"groups","sso_required_groups":""}'
+fi
+
+# --- 2c. signed request object (JAR, RFC 9101) -----------------------------------
+# Keycloak is told to require a signed request object and given our certificate; the
+# login then passes only with JAR on, and a certificate Keycloak does not hold fails it.
+# Registered by certificate, Keycloak names the key itself, hence no Key ID here.
+if [ "$IDP" = "keycloak" ] && command -v docker >/dev/null; then
+    echo ">>> case 2c: signed request object (JAR)"
+    kcadm() { docker exec keycloak /opt/keycloak/bin/kcadm.sh "$@"; }
+    kcadm config credentials --server http://localhost:8080 --realm master --user admin --password "$(kc_admin_password)" >/dev/null 2>&1
+    KCID=$(kcadm get clients -r opnsense -q clientId=opnsense-oidc --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/jar.key" -out "$W/jar.crt" -days 1 -subj /CN=jar 2>/dev/null
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$W/other.key" -out "$W/other.crt" -days 1 -subj /CN=other 2>/dev/null
+    kccert() { kcadm update "clients/$KCID" -r opnsense -s "attributes.\"jwt.credential.certificate\"=$(openssl x509 -in "$1" -outform DER | base64 -w0)" >/dev/null 2>&1; }
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."use.jwks.url"=false' \
+        -s 'attributes."request.object.signature.alg"=RS256' \
+        -s 'attributes."request.object.required"=request or request_uri' >/dev/null 2>&1
+    kccert "$W/jar.crt"
+    asjson "$(python3 -c 'import json,sys;print(json.dumps({"sso_private_key":open(sys.argv[1]).read(),"sso_signed_request":"1"}))' "$W/jar.key")"
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    check "a signed request object is accepted where the IdP requires one" 302 "$(login "$W/jar-jar1")"
+    asjson '{"sso_use_par":"1"}'
+    check "and pushed by PAR" 302 "$(login "$W/jar-jar2")"
+    asjson '{"sso_use_par":""}'
+    # By reference: Keycloak takes only a request_uri, which it must have registered,
+    # and fetches the object from the firewall over the lab-CA HTTPS.
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."request.object.required"=request_uri only' \
+        -s "attributes.\"request.uris\"=$GUI/api/sso/oidc/request*" >/dev/null 2>&1
+    check "a request object passed by value fails where the IdP wants a request_uri" 000 "$(login "$W/jar-jar5")"
+    asjson '{"sso_request_by_reference":"1"}'
+    check "and passes by reference, fetched by the IdP from the firewall" 302 "$(login "$W/jar-jar6")"
+    check "an id the firewall did not issue finds nothing" 404 \
+        "$(curl -sk -o /dev/null -w '%{http_code}' "$GUI/api/sso/oidc/request?id=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")"
+    asjson '{"sso_request_by_reference":""}'
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."request.object.required"=request or request_uri' >/dev/null 2>&1
+    kccert "$W/other.crt"
+    check "a request object signed with a key the IdP does not hold fails" 000 "$(login "$W/jar-jar3")"
+    asjson '{"sso_signed_request":""}'
+    kccert "$W/jar.crt"
+    check "an unsigned request fails where the IdP requires one" 000 "$(login "$W/jar-jar4")"
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."request.object.required"=not required' >/dev/null 2>&1
+    asjson '{"sso_private_key":""}'
+fi
+
+# --- 2d. signed authorization response (JARM) ------------------------------------
+# Keycloak signs the response when asked (query.jwt, form_post.jwt). Once JARM is on, a
+# response stripped of its JWT or with a broken signature must be refused.
+if [ "$IDP" = "keycloak" ]; then
+    echo ">>> case 2d: signed authorization response (JARM)"
+    asjson '{"sso_jarm":"1"}'
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    check "a signed response (query.jwt) logs in" 302 "$(login "$W/jar-jarm1")"
+    check "a response stripped of its JWT is refused" 400 "$(login "$W/jar-jarm2" --callback-param response=)"
+    check "a response whose signature was altered is refused" 400 "$(login "$W/jar-jarm3" --callback-param response=@corrupt)"
+    asjson '{"sso_form_post":"1"}'
+    check "and over form_post.jwt" 302 "$(login "$W/jar-jarm4")"
+    asjson '{"sso_form_post":"","sso_jarm":""}'
+fi
+
+# --- 2e. DPoP-bound access token (RFC 9449) ----------------------------------------
+# Keycloak is told to require DPoP-bound tokens and codes (a client policy enforcing code
+# binding, so the authorization request must carry dpop_jkt), and the lab proxy's DPoP
+# gate (test/idp/proxy/dpop_nonce.py) asks for a nonce at the token and userinfo
+# endpoints. One login then exercises all of it: the code bound to the login key, the
+# token request and the userinfo call each retried with the server nonce.
+if [ "$IDP" = "keycloak" ] && command -v docker >/dev/null; then
+    echo ">>> case 2e: DPoP-bound access token"
+    kcadm() { docker exec -i keycloak /opt/keycloak/bin/kcadm.sh "$@"; }
+    kcadm config credentials --server http://localhost:8080 --realm master --user admin --password "$(kc_admin_password)" >/dev/null 2>&1
+    KCID=$(kcadm get clients -r opnsense -q clientId=opnsense-oidc --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."dpop.bound.access.tokens"=true' >/dev/null 2>&1
+    printf '%s' '{"profiles":[{"name":"dpop-code-binding","executors":[{"executor":"dpop-bind-enforcer","configuration":{"auto-configure":"true","allow-only-refresh-token-binding":"false","enforce-authorization-code-binding-to-dpop":"true"}}]}]}' \
+        | kcadm update client-policies/profiles -r opnsense -f - >/dev/null 2>&1
+    printf '%s' '{"policies":[{"name":"dpop-code-binding","enabled":true,"conditions":[{"condition":"client-access-type","configuration":{"type":["confidential"]}}],"profiles":["dpop-code-binding"]}]}' \
+        | kcadm update client-policies/policies -r opnsense -f - >/dev/null 2>&1
+    asjson '{"sso_dpop":"1"}'
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    UI_BEFORE=$(vm "grep -ah \"userinfo request failed\" /var/log/system/system_*.log /var/log/audit/audit_*.log | grep -vc COMMAND")
+    GATE_FROM=$(docker logs idp-dpop-nonce 2>&1 | wc -l)
+    check "a DPoP login passes where the IdP binds codes and tokens" 302 "$(login "$W/jar-dpop1")"
+    GATE=$(docker logs idp-dpop-nonce 2>&1 | tail -n +$((GATE_FROM + 1)))
+    UI_AFTER=$(vm "grep -ah \"userinfo request failed\" /var/log/system/system_*.log /var/log/audit/audit_*.log | grep -vc COMMAND")
+    printf '%s' "$GATE" | grep -q 'passed POST .*/token with the nonce -> 200' \
+        && ok "the token request was retried with the server nonce" || ko "no nonce retry at the token endpoint ($GATE)"
+    printf '%s' "$GATE" | grep -q 'passed GET .*/userinfo with the nonce -> 200' \
+        && ok "and so was the userinfo call" || ko "no nonce retry at userinfo ($GATE)"
+    check "and userinfo was not lost on the way" "$UI_BEFORE" "$UI_AFTER"
+    asjson '{"sso_dpop":""}'
+    check "without DPoP the login is refused" 000 "$(login "$W/jar-dpop2")"
+    printf '%s' '{"policies":[]}' | kcadm update client-policies/policies -r opnsense -f - >/dev/null 2>&1
+    kcadm update "clients/$KCID" -r opnsense -s 'attributes."dpop.bound.access.tokens"=false' >/dev/null 2>&1
+fi
+
+# --- 10b. front-channel logout --------------------------------------------------
+# What Entra ID offers instead of back-channel: a sign-out at the IdP loads our page in
+# an iframe with the IdP session id. Keycloak is set up for it (setup-keycloak.sh); the
+# helper signs out there from another client of the same session, as a user leaving
+# some other application would, and loads the iframes Keycloak renders.
+echo ">>> case 10b: front-channel logout"
+check "a request without sid is refused" 400 \
+    "$(curl -sk -o /dev/null -w '%{http_code}' "$GUI/api/sso/oidc/frontchannel?provider=$PROVIDER")"
+if [ "$IDP" = "keycloak" ]; then
+    # Keycloak does front- or back-channel per client: make sure this one is front.
+    command -v docker >/dev/null && docker exec keycloak /opt/keycloak/bin/kcadm.sh update \
+        "clients/$(docker exec keycloak /opt/keycloak/bin/kcadm.sh get clients -r opnsense -q clientId=opnsense-oidc --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')" \
+        -r opnsense -s frontchannelLogout=true >/dev/null 2>&1
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    check "login for the front-channel case" 302 "$(login "$W/jar-fc")"
+    python3 lib/kc_frontchannel.py "$W/jar-fc" "https://keycloak.test:9443/realms/opnsense" > "$W/fc.out" 2>&1
+    grep -q "frontchannel?provider=$PROVIDER" "$W/fc.out" \
+        && ok "a sign-out at the IdP frames our front-channel page" \
+        || ko "no front-channel iframe ($(head -c 200 "$W/fc.out"))"
+    grep -q "frame-ancestors https://keycloak.test:9443" "$W/fc.out" \
+        && ok "and only the IdP may frame it" || ko "unexpected framing policy ($(grep CSP "$W/fc.out"))"
+    not_live "$W/jar-fc" "the firewall session ends with the IdP session"
+fi
+
+# --- 10c. a real back-channel logout from Keycloak -----------------------------------
+# Keycloak calls the firewall itself, over HTTPS it can verify: the lab gives the WebGUI a
+# certificate from the lab CA (deploy.sh), which the Keycloak container trusts. Keycloak
+# does front- or back-channel per client, not both, so the client is switched for the
+# case and back afterwards. Its logout token is explicitly typed logout+jwt.
+if [ "$IDP" = "keycloak" ] && command -v docker >/dev/null; then
+    echo ">>> case 10c: a real back-channel logout from Keycloak"
+    # No -i: with stdin attached, "kcadm create" reads it as the request body.
+    kcadm() { docker exec keycloak /opt/keycloak/bin/kcadm.sh "$@"; }
+    kcadm config credentials --server http://localhost:8080 --realm master --user admin --password "$(kc_admin_password)" >/dev/null 2>&1
+    KCID=$(kcadm get clients -r opnsense -q clientId=opnsense-oidc --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')
+    KCUSER=$(kcadm get users -r opnsense -q username="$IDP_USER" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r')
+    # Keycloak sends one logout token per open session: clear those of the earlier cases
+    # (with no logout URL set yet, so nothing is sent) to leave only this case's one.
+    kcadm update "clients/$KCID" -r opnsense -s frontchannelLogout=false \
+        -s 'attributes."backchannel.logout.url"=' >/dev/null 2>&1
+    kcadm create "users/$KCUSER/logout" -r opnsense >/dev/null 2>&1
+    kcadm update "clients/$KCID" -r opnsense \
+        -s "attributes.\"backchannel.logout.url\"=$GUI/api/sso/oidc/backchannel?provider=$PROVIDER" \
+        -s 'attributes."backchannel.logout.session.required"=true' >/dev/null 2>&1
+    vm "rm -f /var/db/os-sso/ratelimit/*.json" >/dev/null
+    check "login for the back-channel case" 302 "$(login "$W/jar-bc")"
+    is_live "$W/jar-bc" "the session is open"
+    kcadm create "users/$KCUSER/logout" -r opnsense >/dev/null 2>&1
+    for _ in 1 2 3 4 5 6 7 8 9 10; do authed "$W/jar-bc" || break; sleep 2; done
+    not_live "$W/jar-bc" "Keycloak's logout token ended it, over verified HTTPS"
+    kcadm update "clients/$KCID" -r opnsense -s frontchannelLogout=true \
+        -s 'attributes."backchannel.logout.url"=' >/dev/null 2>&1
+fi
 
 # --- 11. service scoping --------------------------------------------------------
 # A provider narrowed to the portal must stop being a WebGUI door -- button and

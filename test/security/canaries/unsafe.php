@@ -40,4 +40,10 @@ final class UnsafeController extends ApiControllerBase
 		// A redirect validator does not make a path safe to render as HTML.
 		echo ReturnUrl::sanitize((string)$this->request->get('value')); // expect: TaintedHtml
 	}
+
+
+	public function file(): void
+	{
+		file_get_contents((string)$this->request->get('path')); // expect: TaintedFile
+	}
 }

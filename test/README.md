@@ -52,7 +52,9 @@ The same workflow also runs these account-free CLI tools:
   response headers/content as sinks, and configd action names as command sinks. Structured
   backend arguments are quoted by core; they are not modelled as raw shell commands.
   The reviewed `ReturnUrl::sanitize()` contract removes only header taint. It does not make
-  a value safe for HTML. Five deliberately unsafe flows and three safe controls verify
+  a value safe for HTML. Request-object IDs are validated as exactly 43 URL-safe characters
+  before forming a private-store path; only that validated path clears file-path taint.
+  Six deliberately unsafe flows and four safe controls verify
   those assumptions before every scan. No taint baseline suppresses production findings.
 - **Gitleaks CLI** scans all fetched Git history, with fully redacted SARIF reports.
   `.gitleaks.toml` keeps default rules and narrowly exempts only a public verification-key
@@ -152,12 +154,12 @@ e2e/oidc.sh                                    # or one suite on its own
 
 | Suite | Where | Checks | Covers |
 |---|---|---|---|
-| `oidc.sh` | host | 45-46 | the browser ceremony, Host-header hardening, diagnostics + UI pages, logout CSRF, pushed authorization requests, rate limiting, required groups, deprovisioning *and the login that undoes it*, session expiry, back-channel logout, service scoping, ending a session from the diagnostics page |
+| `oidc.sh` | host | 56-76 | the browser ceremony, the response issuer (RFC 9207), requested claims, JAR, JARM and DPoP with code binding and a server nonce (Keycloak only; JAR, DPoP and the real back-channel logout reconfigure the Keycloak container through `docker`; the nonce comes from the proxy's `dpop_nonce.py` gate), Host-header hardening, diagnostics + UI pages, logout CSRF, pushed authorization requests, rate limiting, required groups, deprovisioning *and the login that undoes it*, session expiry, back-channel logout (a real logout token from Keycloak, over verified HTTPS: `deploy.sh` gives the WebGUI a certificate from the lab CA, which the Keycloak container trusts), front-channel logout, service scoping, ending a session from the diagnostics page |
 | `saml.sh` | host | 16-21 | per-provider EntityID/ACS/SLO, assertion replay, IdP-initiated (off/on/off - Keycloak only), POST binding, metadata import, SLO |
 | `portal.sh` | host | 11 | a captive client signing in, being authorized in its zone, and being disconnected again when its grant is revoked |
 | `vpn-client.sh` | host | 5 | a real OpenVPN client: deferred auth, WEB_AUTH url, tunnel up after the browser login |
-| `scim.sh` | host | 46 | discovery, bearer + source gate, user lifecycle, filters, the four refusals, session revocation on deactivate, and Authentik's real SCIM client |
-| `jwt.sh` | VM | 17 | source gate, signature/aud, `iat`, max-age, single-use, group mapping |
+| `scim.sh` | host | 60 | discovery, bearer + source gate, user lifecycle, filters, the four refusals, group creation for a provider allowed to, session revocation on deactivate, and Authentik's real SCIM client |
+| `jwt.sh` | VM | 20 | source gate, signature/aud, `iat`, max-age, single-use, group mapping, explicit token typing |
 | `cp.sh` | VM | 8 | the authorizer gates, CORS scoping, and a real configd allow |
 | `vpn.sh` | VM | 23 | the hook and the verdict writer, profile resolution, IP binding, single-use session ids, username enforcement, the common name a revocation kills, stale-session sweep |
 

@@ -136,16 +136,17 @@ def follow_to_firewall(session, response, gui, resume=None):
         if response.status_code in (301, 302, 303, 307, 308):
             target = urllib.parse.urljoin(response.url, response.headers["location"])
             if target.startswith(gui):
-                return session.get(target, allow_redirects=False)
+                return session.get(edit_callback(target), allow_redirects=False)
             response = session.get(target, allow_redirects=False)
             continue
 
-        form = re.search(r'action="([^"]+)"[^>]*>(.*?)</form>', response.text, re.S)
+        # Case-insensitive: Keycloak's form_post.jwt page writes ACTION/NAME/VALUE.
+        form = re.search(r'action="([^"]+)"[^>]*>(.*?)</form>', response.text, re.S | re.I)
         if form and gui in html.unescape(form.group(1)):
             fields = {
                 name: html.unescape(value)
                 for name, value in re.findall(
-                    r'name="([^"]+)"[^>]*value="([^"]*)"', form.group(2)
+                    r'name="([^"]+)"[^>]*value="([^"]*)"', form.group(2), re.I
                 )
             }
             return deliver(session, html.unescape(form.group(1)), fields)
@@ -158,6 +159,36 @@ def follow_to_firewall(session, response, gui, resume=None):
             f"stuck at {response.url} ({response.status_code}), no way back to {gui}"
         )
     raise CeremonyError("too many redirects on the way back")
+
+
+# --callback-param edits: name -> value ('' removes the parameter). Lets a suite tamper
+# with what the IdP sent back (iss, response...) and see the firewall refuse it.
+CALLBACK_EDITS = {}
+
+
+def edit_callback(url):
+    """Apply --callback-param to the redirect that lands on the firewall."""
+    if not CALLBACK_EDITS:
+        return url
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    received = dict(query)
+    query = [(k, v) for k, v in query if k not in CALLBACK_EDITS]
+    for name, value in CALLBACK_EDITS.items():
+        if value == "@corrupt":
+            # Change one character of what the IdP sent, keeping its shape. Not the last
+            # one: in base64url the final character of a signature carries padding bits,
+            # and changing those can leave the decoded signature -- and its validity --
+            # untouched. Ten characters in, every bit counts.
+            original = received.get(name, "")
+            if len(original) > 10:
+                i = len(original) - 10
+                value = original[:i] + ("A" if original[i] != "A" else "B") + original[i + 1:]
+            else:
+                value = ""
+        if value != "":
+            query.append((name, value))
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
 
 
 # Set when --capture is in play: the SAMLResponse is written here and never posted.
@@ -219,7 +250,17 @@ def main():
         help="SAML only: write the SAMLResponse here instead of posting it to the ACS, "
         "so a suite can replay it or post it by hand",
     )
+    parser.add_argument(
+        "--callback-param",
+        action="append",
+        default=[],
+        help="name=value: set (or, with an empty value, remove) a parameter of the OIDC "
+        "callback before it reaches the firewall; value @corrupt alters the received one",
+    )
     args = parser.parse_args()
+    for edit in args.callback_param:
+        name, _, value = edit.partition("=")
+        CALLBACK_EDITS[name] = value
 
     session = requests.Session()
     session.verify = False

@@ -38,10 +38,16 @@ class SsoOidc extends Local implements IAuthConnector
     public $ssoMtlsKey = null;
     public $ssoGraphOverage = false;
     public $ssoExtraParams = null;
+    public $ssoClaimsRequest = null;
+    public $ssoSignedRequest = false;
+    public $ssoRequestByReference = false;
+    public $ssoJarm = false;
+    public $ssoDpop = false;
     public $ssoSessionLifetime = 0;
     public $ssoScimEnabled = false;
     public $ssoScimToken = null;
     public $ssoScimTrusted = [];
+    public $ssoScimCreateGroups = false;
     public $ssoServices = [];
     public $ssoCreateUsers = false;
     public $ssoStrictBinding = false;
@@ -51,6 +57,7 @@ class SsoOidc extends Local implements IAuthConnector
     public $ssoGroupMap = null;
     public $ssoGroupSync = false;
     public $ssoButtonLabel = null;
+    public $ssoHideButton = false;
     public $ssoBaseUrl = null;
     public $ssoLoginRedirect = null;
 
@@ -78,6 +85,7 @@ class SsoOidc extends Local implements IAuthConnector
             'sso_group_map' => 'ssoGroupMap',
             'sso_scim_token' => 'ssoScimToken',
             'sso_extra_params' => 'ssoExtraParams',
+            'sso_claims_request' => 'ssoClaimsRequest',
             'sso_token_auth_method' => 'ssoTokenAuthMethod',
             'sso_assertion_alg' => 'ssoAssertionAlg',
             'sso_private_key' => 'ssoPrivateKey',
@@ -93,6 +101,10 @@ class SsoOidc extends Local implements IAuthConnector
         $this->ssoUsePkce = !empty($config['sso_use_pkce']);
         $this->ssoFormPost = !empty($config['sso_form_post']);
         $this->ssoUsePar = !empty($config['sso_use_par']);
+        $this->ssoSignedRequest = !empty($config['sso_signed_request']);
+        $this->ssoRequestByReference = !empty($config['sso_request_by_reference']);
+        $this->ssoJarm = !empty($config['sso_jarm']);
+        $this->ssoDpop = !empty($config['sso_dpop']);
         $this->ssoGraphOverage = !empty($config['sso_graph_overage']);
         if (isset($config['sso_max_age']) && $config['sso_max_age'] !== '') {
             $this->ssoMaxAge = (int)$config['sso_max_age'];
@@ -102,11 +114,13 @@ class SsoOidc extends Local implements IAuthConnector
         $this->ssoStrictBinding = !empty($config['sso_strict_binding']);
         $this->ssoScimEnabled = !empty($config['sso_scim_enabled']);
         $this->ssoScimTrusted = array_filter(array_map('trim', explode(',', $config['sso_scim_trusted'] ?? '')));
+        $this->ssoScimCreateGroups = !empty($config['sso_scim_create_groups']);
         $this->ssoDeprovision = !empty($config['sso_deprovision']);
         if (isset($config['sso_session_lifetime']) && $config['sso_session_lifetime'] !== '') {
             $this->ssoSessionLifetime = (int)$config['sso_session_lifetime'];
         }
         $this->ssoGroupSync = !empty($config['sso_group_sync']);
+        $this->ssoHideButton = !empty($config['sso_hide_button']);
         if (!empty($config['sso_scopes'])) {
             $this->ssoScopes = array_filter(array_map('trim', explode(',', $config['sso_scopes'])));
         }
@@ -123,7 +137,8 @@ class SsoOidc extends Local implements IAuthConnector
         return [
             'sso_issuer' => [
                 'name' => gettext('Issuer URL'),
-                'help' => gettext('OIDC issuer base URL (the part before /.well-known/openid-configuration).') . ' ' . $callback,
+                'help' => gettext('OIDC issuer base URL (the part before /.well-known/openid-configuration).')
+                    . ' ' . $callback,
                 'type' => 'text',
                 'validate' => fn($v) => filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0
                     ? [] : [gettext('Issuer must be a valid https URL.')],
@@ -149,7 +164,8 @@ class SsoOidc extends Local implements IAuthConnector
             ],
             'sso_use_pkce' => [
                 'name' => gettext('Use PKCE (S256)'),
-                'help' => gettext('Proof Key for Code Exchange. Recommended; keep enabled unless the IdP does not support it.'),
+                'help' => gettext('Proof Key for Code Exchange. Recommended; keep enabled unless the IdP does '
+                    . 'not support it.'),
                 'type' => 'checkbox',
                 'default' => '1',
             ],
@@ -180,6 +196,37 @@ class SsoOidc extends Local implements IAuthConnector
                     . 'says, when the IdP declares it requires PAR.'),
                 'type' => 'checkbox',
             ],
+            'sso_signed_request' => [
+                'name' => gettext('Signed request object (JAR)'),
+                'help' => gettext('Send the authorization request as a JWT signed with the client private key '
+                    . 'below (RFC 9101), so the IdP knows it is untouched and comes from this client. Uses the '
+                    . 'same key and algorithm as private_key_jwt: register its certificate at the IdP, or point '
+                    . 'the IdP at the client JWKS URL from the diagnostics page. Combines with PAR.'),
+                'type' => 'checkbox',
+            ],
+            'sso_request_by_reference' => [
+                'name' => gettext('Request object by reference'),
+                'help' => gettext('With a signed request object and without PAR: put only a link to it in the '
+                    . 'browser URL (request_uri, RFC 9101) and let the IdP fetch it from the firewall, which '
+                    . 'must then be reachable from the IdP over HTTPS it trusts. Keeps long requests under URL '
+                    . 'length limits. Some IdPs want the URL registered: it is listed on the diagnostics page.'),
+                'type' => 'checkbox',
+            ],
+            'sso_jarm' => [
+                'name' => gettext('Signed authorization response (JARM)'),
+                'help' => gettext('Ask the IdP to return the code in a JWT it signs (JWT Secured Authorization '
+                    . 'Response Mode), verified with its keys before anything in it is used: the code, the state '
+                    . 'and the issuer can no longer be altered or swapped on the way back. Combines with form_post '
+                    . '(form_post.jwt). Once on, an unsigned response is refused.'),
+                'type' => 'checkbox',
+            ],
+            'sso_dpop' => [
+                'name' => gettext('DPoP-bound access token'),
+                'help' => gettext('Bind the access token to a key the firewall holds (DPoP, RFC 9449), so the '
+                    . 'token alone is useless to anyone who intercepts it. The key is generated per login and '
+                    . 'never stored; nothing to register at the IdP. Needs an IdP that supports DPoP.'),
+                'type' => 'checkbox',
+            ],
             'sso_required_acr' => [
                 'name' => gettext('Required authentication context (acr)'),
                 'help' => gettext('Comma separated authentication context class references, in preference '
@@ -197,6 +244,18 @@ class SsoOidc extends Local implements IAuthConnector
                     . 'flow (state, nonce, redirect_uri, PKCE, max_age, acr_values...) are ignored here - use '
                     . 'the dedicated fields, which also verify what comes back.'),
                 'type' => 'text',
+            ],
+            'sso_claims_request' => [
+                'name' => gettext('Requested claims'),
+                'help' => gettext('Optional OIDC "claims" request parameter, as JSON: the individual claims '
+                    . 'to return in the ID token and/or from userinfo, e.g. '
+                    . '{"id_token": {"groups": {"essential": true}}}. For a claim the IdP would not send by '
+                    . 'default and no scope covers. Only "id_token" and "userinfo" members are accepted.'),
+                'type' => 'text',
+                'validate' => fn($v) => trim((string)$v) === ''
+                    || \OPNsense\SSO\Protocol\OidcProtocol::claimsRequest((string)$v) !== null
+                    ? [] : [gettext('Requested claims must be a JSON object with only "id_token" and/or '
+                        . '"userinfo" objects.')],
             ],
             'sso_token_auth_method' => [
                 'name' => gettext('Client authentication method'),
@@ -304,7 +363,8 @@ class SsoOidc extends Local implements IAuthConnector
             ],
             'sso_create_users' => [
                 'name' => gettext('Automatic user creation'),
-                'help' => gettext('Discouraged on a firewall. Persists new users to config.xml with no local password.'),
+                'help' => gettext('Discouraged on a firewall. Persists new users to config.xml with no local '
+                    . 'password.'),
                 'type' => 'checkbox',
             ],
             'sso_strict_binding' => [
@@ -385,10 +445,26 @@ class SsoOidc extends Local implements IAuthConnector
                 'validate' => fn($v) => \OPNsense\SSO\SourceGate::isValidList((string)$v)
                     ? [] : [gettext('Enter valid source IP addresses or CIDR networks.')],
             ],
+            'sso_scim_create_groups' => [
+                'name' => gettext('SCIM may create groups'),
+                'help' => gettext('Let this IdP create groups over SCIM (Entra group provisioning, Okta Push '
+                    . 'Groups) instead of only filling the ones that exist. A group it creates starts with no '
+                    . 'privilege - granting it any stays your decision - and it may rename, replace or delete '
+                    . 'only the groups it created, while they carry no privilege. A directory name core does '
+                    . 'not accept as a group name ("VPN Users") is kept for SCIM and becomes VPN_Users here.'),
+                'type' => 'checkbox',
+            ],
             'sso_button_label' => [
                 'name' => gettext('Login button label'),
                 'help' => gettext('Text shown on the login-page button (defaults to the server name).'),
                 'type' => 'text',
+            ],
+            'sso_hide_button' => [
+                'name' => gettext('Hide login button'),
+                'help' => gettext('Do not offer this provider on the WebGUI login page. Logins started elsewhere still '
+                    . 'work: a link to its login URL (Diagnostics lists it) or the IdP\'s app launcher. '
+                    . 'Unticking webgui in Applies to would refuse those too.'),
+                'type' => 'checkbox',
             ],
             'sso_base_url' => [
                 'name' => gettext('Base URL'),
@@ -397,7 +473,8 @@ class SsoOidc extends Local implements IAuthConnector
                     . 'without it the URL is derived from the request Host header, which the client controls. '
                     . 'Set it to exactly what the IdP has registered (mind a reverse proxy or port-forward).'),
                 'type' => 'text',
-                'validate' => fn($v) => !empty($v) && filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0
+                'validate' => fn($v) => !empty($v)
+                    && filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0
                     ? [] : [gettext('Base URL is required and must be a valid https URL.')],
             ],
             'sso_login_redirect' => [
@@ -406,7 +483,8 @@ class SsoOidc extends Local implements IAuthConnector
                     . 'when no specific page was requested (e.g. /ui/dashboard or /index.php). '
                     . 'Leave empty to use the originally requested page, or the dashboard.'),
                 'type' => 'text',
-                'validate' => fn($v) => empty($v) || ($v[0] === '/' && !str_starts_with($v, '//') && strpbrk($v, "\\\r\n\t") === false)
+                'validate' => fn($v) => empty($v)
+                    || ($v[0] === '/' && !str_starts_with($v, '//') && strpbrk($v, "\\\r\n\t") === false)
                     ? [] : [gettext('Landing URL must be a same-site path starting with "/".')],
             ],
             // Hidden carrier: JS shows the live redirect/callback URL under Base URL.

@@ -77,6 +77,14 @@ be a non-empty OIDC identifier, binds `at_hash` to the access token and requires
 asymmetric signature; SAML verifies the assertion signature and is replay-protected
 (single-use request id plus a consumed-assertion cache).
 
+The authorization response must name the IdP the user was sent to (RFC 9207 `iss`, which
+closes the mix-up attack between providers), and a token declaring another kind in its
+`typ` header (RFC 8725) is refused where it does not belong - a logout token is never an
+ID token, nor a DPoP proof a forward-auth login. Optionally, the request travels signed
+by the client (JAR), the response comes back signed by the IdP (JARM, and an unsigned one
+is then refused), and the authorization code and the access token are bound to a
+per-login key (DPoP, with `dpop_jkt`) so that neither is of use to whoever intercepts it.
+
 What the IdP is *asked* for is also *checked* on return - `max_age` against `auth_time`
 (SAML: `AuthnInstant`), the required `acr` against the returned one - because requesting an
 MFA context is voluntary per the spec, so only the answer proves anything.
@@ -97,7 +105,7 @@ proxy or port-forward; the form shows the exact redirect/ACS URL to copy into th
 
 ## Revocation reaches all three doors
 
-A back-channel logout, a SAML Single Logout, a SCIM `active: false`, "deprovision on
+A back-channel or front-channel logout, a SAML Single Logout, a SCIM `active: false`, "deprovision on
 refused login" and the *End* button on the diagnostics page all act on the same record of
 what os-sso granted - so they end the WebGUI session, disconnect the captive-portal client
 from the network, and drop the OpenVPN tunnels of that client username, rather than only the
@@ -129,7 +137,9 @@ Existing tunnels remain subject to the recorded session lifetime and revocation.
 Managed SSO instances refuse native OpenVPN authentication tokens, as described below.
 
 [SCIM](scim.md) needs a bearer token **and** a source-address allowlist, and refuses on the
-same principles as the login path.
+same principles as the login path. A provider may create groups only when explicitly
+allowed to, and those start with no privilege: what a group may do on the firewall stays
+an operator decision.
 
 ## Configuration transactions and revocation failures
 

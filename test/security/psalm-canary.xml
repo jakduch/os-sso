@@ -3,6 +3,8 @@
     <projectFiles>
         <directory name="test/security/canaries" />
         <file name="src/opnsense/mvc/app/library/OPNsense/SSO/ReturnUrl.php" />
+        <file name="src/opnsense/mvc/app/library/OPNsense/SSO/RequestObjectStore.php" />
+        <file name="src/opnsense/mvc/app/library/OPNsense/SSO/StateDir.php" />
     </projectFiles>
     <stubs>
         <file name="test/security/framework.phpstub" />

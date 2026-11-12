@@ -9,6 +9,13 @@ Each configured OIDC/SAML/JWT server adds a **“Login with …”** button to t
 login page. Users click it, authenticate at the IdP, and land in the WebGUI with
 privileges from their mapped groups.
 
+**Hide login button** keeps a WebGUI provider off the page while its login endpoint stays
+open, for a provider users reach another way: a bookmark or an IdP app launcher pointing
+at its **Login (direct link)** from the diagnostics page, IdP-initiated SAML, or a JWT
+proxy that starts the login itself (see
+[JWT forward-auth](jwt.md#proxies-that-start-the-login-themselves)). Unticking `webgui`
+in **Applies to** is not the same thing: that refuses those logins too.
+
 A provider whose **Applies to** does not list `webgui` gets no button - and its login
 endpoint refuses a WebGUI login, which is the half that matters: the button is only the
 part an attacker does not need.
@@ -159,7 +166,7 @@ sessions. Register at your IdP:
 
 Both bring the browser back through a short "signed out" page that sends no `Referer`,
 then on to the login page. Coming straight from the IdP, the login page would be
-refused by OPNsense's HTTP_REFERER check (*The HTTP_REFERER "https://login.live.com/"
+refused by OPNsense's HTTP_REFERER check (*The HTTP_REFERER "`https://login.live.com/`"
 does not match the predefined settings*), which this keeps on without listing the IdP
 under alternate hostnames.
 
@@ -177,6 +184,14 @@ elsewhere, or when you disable the account. Without it (and without a maximum se
 lifetime) an open session survives until it idles out. The endpoint takes only a signed
 `logout_token`: issuer, audience, `iat` freshness, the backchannel-logout event, absence
 of a `nonce` and single-use `jti` are all checked before any session is ended.
+
+**Front-channel logout (OIDC).** For an IdP without back-channel logout - **Entra ID**,
+whose only option is a *Front-channel logout URL* - register
+`https://<opnsense>/api/sso/oidc/frontchannel?provider=<name>` instead. The IdP loads it in
+an iframe when the user signs out there, and the firewall ends the sessions of that IdP
+session. Nothing signs that request, so it relies on the IdP session id: the IdP must send
+`sid` (Keycloak: *Front-channel logout session required*), and an `iss` it sends must be
+the discovered issuer exactly. The page can be framed by the IdP's origin only.
 
 ## API access (not SSO)
 
