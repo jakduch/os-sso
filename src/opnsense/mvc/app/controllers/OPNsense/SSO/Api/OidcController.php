@@ -22,6 +22,7 @@ use OPNsense\SSO\HtmlPage;
 use OPNsense\SSO\LogoutGuard;
 use OPNsense\SSO\NavigationGuard;
 use OPNsense\SSO\RateLimiter;
+use OPNsense\SSO\RequestObjectStore;
 use OPNsense\SSO\ReturnUrl;
 use OPNsense\SSO\ServiceScope;
 use OPNsense\SSO\SiteUrl;
@@ -129,7 +130,9 @@ class OidcController extends ApiControllerBase
             // Recover this login's in-flight record by the state the IdP echoes back
             // (single use). Trust the provider recorded at startLogin over any query
             // param, so a crafted callback URL cannot steer which provider validates.
-            $state = (string)($response['state'] ?? '');
+            // With JARM the state sits inside the signed response: read it unverified,
+            // only to find the flow -- the protocol verifies the JWT, then the state.
+            $state = (string)($response['state'] ?? OidcProtocol::peekJarmState((string)($response['response'] ?? '')));
             $flow = $this->consumeFlow($state);
             $provider = is_array($flow) && $flow['provider'] !== ''
                 ? (string)$flow['provider']
@@ -278,6 +281,30 @@ class OidcController extends ApiControllerBase
     }
 
     /**
+     * GET /api/sso/oidc/request?id=<id> -- a signed request object, fetched by the IdP
+     * when the authorization request names it by reference (JAR request_uri, RFC 9101
+     * section 5.2). Served as long as it is valid (RequestObjectStore::TTL), not once:
+     * it is the same signed object a by-value request puts in the browser URL.
+     */
+    public function requestAction()
+    {
+        $this->response->setHeader('Cache-Control', 'no-store');
+        try {
+            RateLimiter::hit('oidc-request', $this->clientIp(), 120);
+            $jwt = RequestObjectStore::get((string)$this->request->get('id'));
+        } catch (\Throwable $e) {
+            syslog(LOG_NOTICE, 'os-sso oidc request object: ' . $e->getMessage());
+            $jwt = null;
+        }
+        if ($jwt === null) {
+            $this->response->setStatusCode(404, 'Not Found');
+            return '';
+        }
+        $this->response->setContentType('application/oauth-authz-req+jwt');
+        return $jwt;
+    }
+
+    /**
      * POST /api/sso/oidc/backchannel?provider=<name> -- OIDC Back-Channel Logout.
      *
      * The IdP calls this server-to-server when a session ends on its side, so that a
@@ -318,6 +345,45 @@ class OidcController extends ApiControllerBase
         }
         $this->response->setStatusCode(200, 'OK');
         return '';
+    }
+
+    /**
+     * GET /api/sso/oidc/frontchannel?provider=<name>&iss=...&sid=... -- OIDC Front-Channel
+     * Logout.
+     *
+     * The IdP loads this in an iframe when a session ends on its side, and ends ours for
+     * the same IdP session. It is the logout Entra ID offers (it has no back-channel), so
+     * without it a sign-out at Entra left the WebGUI session open until it idled out.
+     * The page must be frameable by the IdP, and by the IdP only.
+     */
+    public function frontchannelAction()
+    {
+        $this->response->setHeader('Cache-Control', 'no-store');
+        $this->response->setHeader('Content-Type', 'text/html; charset=UTF-8');
+        $this->response->setHeader('X-Content-Type-Options', 'nosniff');
+        try {
+            RateLimiter::hit('oidc-frontchannel', $this->clientIp(), 120);
+            $provider = $this->request->get('provider');
+            $auth = $this->authServer($provider);
+            $protocol = $this->protocolFor($provider, $auth);
+            $this->response->setHeader(
+                'Content-Security-Policy',
+                "default-src 'none'; frame-ancestors " . (implode(' ', $protocol->frontChannelOrigins()) ?: "'none'")
+            );
+            $sid = $protocol->frontChannelSid($_GET);
+            $ended = SessionRegistry::destroyForSubject($protocol->getIssuer(), '', $sid, (string)$provider);
+            syslog(LOG_NOTICE, sprintf(
+                'os-sso oidc: front-channel logout from %s ended %d session(s)',
+                (string)$provider,
+                $ended
+            ));
+        } catch (\Throwable $e) {
+            syslog(LOG_ERR, 'os-sso oidc frontchannel: ' . $e->getMessage());
+            $this->response->setStatusCode(400, 'Bad Request');
+            return '';
+        }
+        $this->response->setStatusCode(200, 'OK');
+        return '<!doctype html><html><head><meta charset="utf-8"><title>Signed out</title></head><body></body></html>';
     }
 
     /** GET /api/sso/oidc/logout -- RP-initiated Single Logout. */
@@ -423,8 +489,14 @@ class OidcController extends ApiControllerBase
             'max_age' => $auth->ssoMaxAge,
             'form_post' => $auth->ssoFormPost,
             'use_par' => $auth->ssoUsePar,
+            'signed_request' => $auth->ssoSignedRequest,
+            'request_uri_base' => $auth->ssoRequestByReference
+                ? $this->baseUrlFor($auth) . '/api/sso/oidc/request' : '',
+            'jarm' => $auth->ssoJarm,
+            'dpop' => $auth->ssoDpop,
             'required_acr' => $auth->ssoRequiredAcr,
             'extra_params' => $auth->ssoExtraParams,
+            'claims_request' => $auth->ssoClaimsRequest,
             'graph_overage' => $auth->ssoGraphOverage,
             'token_auth_method' => $auth->ssoTokenAuthMethod,
             'assertion_alg' => $auth->ssoAssertionAlg,

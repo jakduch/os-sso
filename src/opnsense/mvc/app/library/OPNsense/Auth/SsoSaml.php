@@ -31,6 +31,7 @@ class SsoSaml extends Local implements IAuthConnector
     public $ssoAllowSha1 = false;
     public $ssoAuthnPostBinding = false;
     public $ssoAuthnRequestsSigned = false;
+    public $ssoSignMetadata = false;
     public $ssoForceAuthn = false;
     public $ssoRequiredAcr = [];
     public $ssoMaxAge = 0;
@@ -41,6 +42,7 @@ class SsoSaml extends Local implements IAuthConnector
     public $ssoScimEnabled = false;
     public $ssoScimToken = null;
     public $ssoScimTrusted = [];
+    public $ssoScimCreateGroups = false;
     public $ssoServices = [];
     public $ssoCreateUsers = false;
     public $ssoStrictBinding = false;
@@ -50,6 +52,7 @@ class SsoSaml extends Local implements IAuthConnector
     public $ssoGroupMap = null;
     public $ssoGroupSync = false;
     public $ssoButtonLabel = null;
+    public $ssoHideButton = false;
     public $ssoBaseUrl = null;
     public $ssoLoginRedirect = null;
 
@@ -95,15 +98,18 @@ class SsoSaml extends Local implements IAuthConnector
         $this->ssoStrictBinding = !empty($config['sso_strict_binding']);
         $this->ssoScimEnabled = !empty($config['sso_scim_enabled']);
         $this->ssoScimTrusted = array_filter(array_map('trim', explode(',', $config['sso_scim_trusted'] ?? '')));
+        $this->ssoScimCreateGroups = !empty($config['sso_scim_create_groups']);
         $this->ssoDeprovision = !empty($config['sso_deprovision']);
         if (isset($config['sso_session_lifetime']) && $config['sso_session_lifetime'] !== '') {
             $this->ssoSessionLifetime = (int)$config['sso_session_lifetime'];
         }
         $this->ssoGroupSync = !empty($config['sso_group_sync']);
+        $this->ssoHideButton = !empty($config['sso_hide_button']);
         $this->ssoWantMessagesSigned = !empty($config['sso_want_messages_signed']);
         $this->ssoAllowSha1 = !empty($config['sso_allow_sha1']);
         $this->ssoAuthnPostBinding = !empty($config['sso_authn_post_binding']);
         $this->ssoAuthnRequestsSigned = !empty($config['sso_authn_requests_signed']);
+        $this->ssoSignMetadata = !empty($config['sso_sign_metadata']);
         $this->ssoForceAuthn = !empty($config['sso_force_authn']);
         $this->ssoRequiredAcr = array_filter(array_map('trim', explode(',', $config['sso_required_acr'] ?? '')));
         if (isset($config['sso_max_age']) && $config['sso_max_age'] !== '') {
@@ -133,7 +139,8 @@ class SsoSaml extends Local implements IAuthConnector
                     . 'read from it (cached 24h) -- which also means an IdP signing-key rotation is picked '
                     . 'up on its own. Anything you fill in by hand wins over the document.'),
                 'type' => 'text',
-                'validate' => fn($v) => empty($v) || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
+                'validate' => fn($v) => empty($v)
+                    || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
                     ? [] : [gettext('Metadata URL must be a valid https URL.')],
             ],
             'sso_idp_metadata_cert' => [
@@ -156,14 +163,17 @@ class SsoSaml extends Local implements IAuthConnector
                 'help' => gettext('IdP Single Sign-On endpoint (HTTP-Redirect binding). '
                     . 'Required unless an IdP metadata URL is set.'),
                 'type' => 'text',
-                'validate' => fn($v) => empty($v) || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
+                'validate' => fn($v) => empty($v)
+                    || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
                     ? [] : [gettext('SSO URL must be a valid https URL.')],
             ],
             'sso_idp_slo_url' => [
                 'name' => gettext('IdP SLO URL'),
-                'help' => gettext('IdP Single Logout endpoint (HTTP-Redirect). Leave empty to disable SLO; defaults to the SSO URL on Keycloak.'),
+                'help' => gettext('IdP Single Logout endpoint (HTTP-Redirect). Leave empty to disable SLO; '
+                    . 'defaults to the SSO URL on Keycloak.'),
                 'type' => 'text',
-                'validate' => fn($v) => empty($v) || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
+                'validate' => fn($v) => empty($v)
+                    || (filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0)
                     ? [] : [gettext('SLO URL must be a valid https URL.')],
             ],
             'sso_idp_x509' => [
@@ -187,7 +197,8 @@ class SsoSaml extends Local implements IAuthConnector
             ],
             'sso_nameid_format' => [
                 'name' => gettext('NameID format'),
-                'help' => gettext('Requested NameID format. "persistent" suits most setups; some IdPs need "unspecified" or "emailAddress".'),
+                'help' => gettext('Requested NameID format. "persistent" suits most setups; some IdPs need '
+                    . '"unspecified" or "emailAddress".'),
                 'type' => 'text',
                 'default' => $this->ssoNameIdFormat,
             ],
@@ -217,7 +228,8 @@ class SsoSaml extends Local implements IAuthConnector
             ],
             'sso_want_messages_signed' => [
                 'name' => gettext('Require signed response'),
-                'help' => gettext('Require the SAML Response (message) itself to be signed, not only the assertion. Enable when the IdP supports it (mitigates signature-wrapping).'),
+                'help' => gettext('Require the SAML Response (message) itself to be signed, not only the '
+                    . 'assertion. Enable when the IdP supports it (mitigates signature-wrapping).'),
                 'type' => 'checkbox',
             ],
             'sso_allow_sha1' => [
@@ -264,6 +276,14 @@ class SsoSaml extends Local implements IAuthConnector
                     . 'Needs the SP certificate and private key below. Required by some IdPs (ADFS in a '
                     . 'strict configuration, Keycloak with "Client signature required"); harmless '
                     . 'otherwise, since the IdP learns our signing certificate from the same metadata.'),
+                'type' => 'checkbox',
+            ],
+            'sso_sign_metadata' => [
+                'name' => gettext('Sign the SP metadata'),
+                'help' => gettext('Sign the metadata document this firewall publishes, with the SP '
+                    . 'certificate and private key below. Required by federations that only load '
+                    . 'signed metadata (Shibboleth, eduGAIN); an IdP fed the metadata by hand does not '
+                    . 'need it.'),
                 'type' => 'checkbox',
             ],
             'sso_authn_post_binding' => [
@@ -321,7 +341,8 @@ class SsoSaml extends Local implements IAuthConnector
             ],
             'sso_create_users' => [
                 'name' => gettext('Automatic user creation'),
-                'help' => gettext('Discouraged on a firewall. Persists new users to config.xml with no local password.'),
+                'help' => gettext('Discouraged on a firewall. Persists new users to config.xml with no local '
+                    . 'password.'),
                 'type' => 'checkbox',
             ],
             'sso_strict_binding' => [
@@ -402,10 +423,26 @@ class SsoSaml extends Local implements IAuthConnector
                 'validate' => fn($v) => \OPNsense\SSO\SourceGate::isValidList((string)$v)
                     ? [] : [gettext('Enter valid source IP addresses or CIDR networks.')],
             ],
+            'sso_scim_create_groups' => [
+                'name' => gettext('SCIM may create groups'),
+                'help' => gettext('Let this IdP create groups over SCIM (Entra group provisioning, Okta Push '
+                    . 'Groups) instead of only filling the ones that exist. A group it creates starts with no '
+                    . 'privilege - granting it any stays your decision - and it may rename, replace or delete '
+                    . 'only the groups it created, while they carry no privilege. A directory name core does '
+                    . 'not accept as a group name ("VPN Users") is kept for SCIM and becomes VPN_Users here.'),
+                'type' => 'checkbox',
+            ],
             'sso_button_label' => [
                 'name' => gettext('Login button label'),
                 'help' => gettext('Text shown on the login-page button (defaults to the server name).'),
                 'type' => 'text',
+            ],
+            'sso_hide_button' => [
+                'name' => gettext('Hide login button'),
+                'help' => gettext('Do not offer this provider on the WebGUI login page. Logins started elsewhere still '
+                    . 'work: a link to its login URL (Diagnostics lists it) or, with IdP-initiated login '
+                    . 'allowed, the IdP\'s app portal. Unticking webgui in Applies to would refuse those too.'),
+                'type' => 'checkbox',
             ],
             'sso_base_url' => [
                 'name' => gettext('Base URL'),
@@ -414,7 +451,8 @@ class SsoSaml extends Local implements IAuthConnector
                     . 'the request Host header, which the client controls. Set it to the public URL the IdP '
                     . 'reaches (mind a reverse proxy or port-forward) so the signed Destination/ACS match.'),
                 'type' => 'text',
-                'validate' => fn($v) => !empty($v) && filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0
+                'validate' => fn($v) => !empty($v)
+                    && filter_var($v, FILTER_VALIDATE_URL) && stripos($v, 'https://') === 0
                     ? [] : [gettext('Base URL is required and must be a valid https URL.')],
             ],
             'sso_login_redirect' => [
@@ -423,7 +461,8 @@ class SsoSaml extends Local implements IAuthConnector
                     . 'when no specific page was requested (e.g. /ui/dashboard or /index.php). '
                     . 'Leave empty to use the originally requested page, or the dashboard.'),
                 'type' => 'text',
-                'validate' => fn($v) => empty($v) || ($v[0] === '/' && !str_starts_with($v, '//') && strpbrk($v, "\\\r\n\t") === false)
+                'validate' => fn($v) => empty($v)
+                    || ($v[0] === '/' && !str_starts_with($v, '//') && strpbrk($v, "\\\r\n\t") === false)
                     ? [] : [gettext('Landing URL must be a same-site path starting with "/".')],
             ],
             // The legacy Servers form only renders text/dropdown/checkbox, so this

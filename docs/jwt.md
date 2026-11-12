@@ -18,6 +18,16 @@ Access).
 
 Only asymmetric algorithms (`RS256`/`ES256`/…) are accepted; `exp`/`nbf` are enforced.
 
+## Proxies that start the login themselves
+
+The login page shows a button for the provider, which works when the proxy fronts every
+request: the click goes through it and picks up the header. Some setups only inject the
+header on the one request the proxy makes itself - for example an application that opens
+the firewall's WebGUI for an already authenticated user. There a click on the button
+arrives without a token and fails, and the button shows on the LAN login page as well.
+Tick **Hide login button** to keep the provider off the login page; the login endpoint
+keeps working.
+
 ## Bounding the replay window
 
 A signed JWT is a bearer credential - whoever holds the bytes is the user until it
@@ -32,3 +42,11 @@ tokens:
 
 PS256 verification is included through the locked `phpseclib/phpseclib` dependency.
 Source allowlists reject malformed CIDR prefixes instead of treating them as `/0`.
+
+## Token types
+
+A token that declares another kind in its `typ` header (RFC 8725 explicit typing) is
+refused, whatever it carries: a back-channel logout token (`logout+jwt`), a DPoP proof
+(`dpop+jwt`) or a security event (`secevent+jwt`) is not a login. An access token
+(`at+jwt`) is accepted - that is what proxies such as oauth2-proxy forward - and so is a
+token with no `typ` or the generic `JWT`.

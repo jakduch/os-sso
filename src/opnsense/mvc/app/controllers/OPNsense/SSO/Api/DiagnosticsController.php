@@ -282,10 +282,17 @@ class DiagnosticsController extends ApiControllerBase
                 $urls = [
                     'Redirect / callback' => $base . '/api/sso/oidc/callback',
                     'Back-channel logout' => $base . '/api/sso/oidc/backchannel' . $q,
+                    // Entra ID only offers this one (no back-channel); register it there.
+                    'Front-channel logout' => $base . '/api/sso/oidc/frontchannel' . $q,
                     'Post-logout redirect' => $base . OidcProtocol::POST_LOGOUT_PATH,
                     // Only of interest with private_key_jwt, but cheap to always show:
                     // it is where the IdP reads our client public key from.
                     'Client JWKS' => $base . '/api/sso/oidc/jwks' . $q,
+                    // Only with a request object by reference; Keycloak wants it registered.
+                    'Request object URI' => $base . '/api/sso/oidc/request',
+                    // What the login button opens; the way in when the button is hidden,
+                    // and the "initiate login URI" an IdP app launcher wants.
+                    'Login (direct link)' => $base . '/api/sso/oidc/login' . $q,
                 ];
                 break;
             case 'saml':
@@ -293,6 +300,7 @@ class DiagnosticsController extends ApiControllerBase
                     'ACS' => $base . '/api/sso/saml/acs' . $q,
                     'EntityID / metadata' => $base . '/api/sso/saml/metadata' . $q,
                     'SLO' => $base . '/api/sso/saml/slo' . $q,
+                    'Login (direct link)' => $base . '/api/sso/saml/login' . $q,
                 ];
                 break;
             default:

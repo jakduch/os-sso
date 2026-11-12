@@ -50,7 +50,32 @@ endpoint is used automatically.
 - **Pushed authorization requests** (PAR, RFC 9126) - the request goes over the back
   channel and the browser only carries an opaque reference. Used automatically when the
   IdP declares it requires them.
+- **Signed request object** (JAR, RFC 9101) - the whole authorization request travels
+  as a JWT signed with the client private key (the one private_key_jwt uses), so the IdP
+  knows it is untouched and comes from this client. Combines with PAR, which then pushes
+  the signed object. Register the key at the IdP through the client JWKS URL from the
+  diagnostics page; if you upload the certificate instead, leave **Key ID** empty (or
+  set it to the id the IdP shows for it), since the IdP names an uploaded key itself.
+  Without PAR, **Request object by reference** puts only a link in the browser URL
+  (`request_uri`) and lets the IdP fetch the object from the firewall for two minutes:
+  the IdP must reach the firewall over HTTPS it trusts, and some (Keycloak) want the
+  **Request object URI** from the diagnostics page registered.
+- **Signed authorization response** (JARM) - the IdP returns the code, state and issuer
+  in a JWT it signs (`query.jwt`, or `form_post.jwt` with form_post), verified with its
+  keys before anything in it is used. Once on, an unsigned response is refused rather
+  than read the plain way.
+- **DPoP-bound access token** (RFC 9449) - the access token is bound to a key the
+  firewall holds, generated when the login starts and dropped at its callback: the
+  authorization request names it (`dpop_jkt`), so the code itself is bound and a stolen
+  one cannot be redeemed; the token request and the userinfo call carry DPoP proofs, and
+  an intercepted token is useless alone. A server nonce (`DPoP-Nonce`) is honoured.
+  Nothing to register at the IdP.
 - **Extra authorization parameters** - for things like `prompt=login`.
+- **Requested claims** - the OIDC `claims` request parameter, as JSON, for an individual
+  claim the IdP does not send by default and no scope covers:
+  `{"id_token": {"groups": {"essential": true}}}`. Only `id_token` and `userinfo`
+  members are accepted. Keycloak honours a requested *value* only for a claim marked
+  `essential`.
 
 A **signed userinfo response** (`userinfo_signed_response_alg`) needs nothing configured:
 the JWT is verified against the same keys as the ID token, and refused if it is signed
@@ -59,11 +84,21 @@ where groups usually come from, and a response os-sso cannot read is a login tha
 with none of them - which now says so in the log instead of looking like an IdP that
 sends no groups at all.
 
-**Deliberately absent.** A **request object** (JAR) adds little once PAR keeps the request
-off the browser entirely; **refresh tokens** would be an offline credential for calls
-os-sso never makes; **DPoP** binds access tokens the firewall does not keep; and an
-**encrypted ID token or userinfo response** (JWE) is a decryption key to hold for
-something that already travels inside TLS to a back-channel endpoint.
+The **issuer of the authorization response** (RFC 9207) is checked without any setting:
+an `iss` the IdP sends back with the code must be the discovered issuer exactly, and when
+the IdP declares it always sends one (`authorization_response_iss_parameter_supported`,
+as Keycloak does), a response without it is refused. With several providers configured
+that closes the mix-up attack, where one IdP's response is passed off as another's.
+
+**Token types** (RFC 8725 explicit typing) are checked where the IdP declares them: an ID
+token or a signed userinfo response declaring another kind (`logout+jwt`, `at+jwt`,
+`dpop+jwt`, `secevent+jwt`) is refused, and a back-channel logout token may declare only
+`logout+jwt` or the generic `JWT`. A token without `typ` is accepted, as most IdPs send.
+
+**Deliberately absent.** **Refresh tokens** would be an offline credential for calls
+os-sso never makes; and an **encrypted ID token or userinfo response** (JWE) is a
+decryption key to hold for something that already travels inside TLS to a back-channel
+endpoint.
 
 ## Providers
 

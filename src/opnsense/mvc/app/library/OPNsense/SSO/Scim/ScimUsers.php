@@ -221,7 +221,8 @@ final class ScimUsers
                         $changed = $this->accounts->setField($node, 'descr', (string)$value) || $changed;
                         break;
                     case 'externalid':
-                        $changed = $this->accounts->stampOnce($node, 'scim_ref', $this->ref((string)$value)) || $changed;
+                        $changed = $this->accounts->stampOnce($node, 'scim_ref', $this->ref((string)$value))
+                            || $changed;
                         break;
                     case 'emails':
                     case 'emails[primary eq true].value':
@@ -456,7 +457,8 @@ final class ScimUsers
             $changed = $this->accounts->setField($node, 'email', $email) || $changed;
         }
         if (!empty($payload['externalId'])) {
-            $changed = $this->accounts->stampOnce($node, 'scim_ref', $this->ref((string)$payload['externalId'])) || $changed;
+            $changed = $this->accounts->stampOnce($node, 'scim_ref', $this->ref((string)$payload['externalId']))
+                || $changed;
         }
         return $changed;
     }

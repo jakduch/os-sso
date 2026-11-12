@@ -10,10 +10,13 @@ namespace OPNsense\SSO\Protocol;
 use Firebase\JWT\JWT;
 use OPNsense\SSO\ClaimPath;
 use OPNsense\SSO\ClientAuth;
+use OPNsense\SSO\DPoP;
+use OPNsense\SSO\RequestObjectStore;
 use OPNsense\SSO\JwkSet;
 use OPNsense\SSO\ReturnUrl;
 use OPNsense\SSO\NormalizedIdentity;
 use OPNsense\SSO\StateDir;
+use OPNsense\SSO\TokenType;
 
 /**
  * Hand-rolled OpenID Connect Relying Party on top of firebase/php-jwt.
@@ -37,6 +40,8 @@ final class OidcProtocol implements ProtocolInterface
     private const DISCO_TTL = 3600;       // discovery document cache TTL
     private const JWKS_TTL = 3600;        // JWKS cache TTL (refetched early on kid miss)
     private const LOGOUT_TOKEN_TTL = 300; // max age of a back-channel logout token
+    /** Token kinds (RFC 8725 explicit typing) that are never an ID token or userinfo. */
+    private const NOT_ID_TOKENS = [TokenType::LOGOUT, TokenType::ACCESS, TokenType::DPOP, TokenType::SECEVENT];
 
     private string $issuer;
     private string $clientId;
@@ -55,6 +60,8 @@ final class OidcProtocol implements ProtocolInterface
     private array $requiredAcr;
     /** @var array<string,string> extra authorization-request parameters */
     private array $extraParams;
+    /** the OIDC "claims" request parameter, as compact JSON ('' = none) */
+    private string $claimsRequest;
     /** per-provider session-key prefix so concurrent flows do not clobber each other */
     private string $sessionPrefix;
     /** how this firewall proves it is the client when calling the token endpoint */
@@ -63,6 +70,16 @@ final class OidcProtocol implements ProtocolInterface
     private bool $graphOverage;
     /** push the authorization request to the IdP instead of sending it through the browser */
     private bool $usePar;
+    /** send the authorization request as a signed request object (JAR, RFC 9101) */
+    private bool $signedRequest;
+    /** Where the IdP fetches a request object by reference; '' sends it by value. */
+    private string $requestUriBase;
+    /** have the IdP sign the authorization response (JARM) */
+    private bool $jarm;
+    /** bind the access token to an ephemeral key with DPoP proofs (RFC 9449) */
+    private bool $useDpop;
+    /** the DPoP key of the login in progress, null when DPoP is off */
+    private ?DPoP $dpop = null;
 
     /** @var array<string,mixed>|null cached discovery document */
     private ?array $discovery = null;
@@ -97,8 +114,15 @@ final class OidcProtocol implements ProtocolInterface
             (array)($cfg['required_acr'] ?? [])
         )));
         $this->extraParams = self::parseExtraParams((string)($cfg['extra_params'] ?? ''));
+        $claims = trim((string)($cfg['claims_request'] ?? ''));
+        $this->claimsRequest = $claims === '' ? '' : (self::claimsRequest($claims)
+            ?? throw new \RuntimeException('OIDC: the requested claims are not a valid claims request'));
         $this->graphOverage = (bool)($cfg['graph_overage'] ?? false);
         $this->usePar = (bool)($cfg['use_par'] ?? false);
+        $this->signedRequest = (bool)($cfg['signed_request'] ?? false);
+        $this->requestUriBase = (string)($cfg['request_uri_base'] ?? '');
+        $this->jarm = (bool)($cfg['jarm'] ?? false);
+        $this->useDpop = (bool)($cfg['dpop'] ?? false);
         $this->clientAuth = new ClientAuth([
             'client_id' => $this->clientId,
             'client_secret' => $this->clientSecret,
@@ -163,14 +187,33 @@ final class OidcProtocol implements ProtocolInterface
             // Keep the code out of the URL (browser history, Referer, proxy logs).
             $params['response_mode'] = 'form_post';
         }
+        if ($this->jarm) {
+            // The same transport, the response signed by the IdP (JARM).
+            $params['response_mode'] = $this->formPost ? 'form_post.jwt' : 'query.jwt';
+        }
         if (!empty($this->requiredAcr)) {
             // Ask for the context we are going to insist on in validateIdToken. Order is
             // the preference order per OIDC Core; the check accepts any of them.
             $params['acr_values'] = implode(' ', $this->requiredAcr);
         }
+        if ($this->claimsRequest !== '') {
+            // Individual claims no scope covers (OIDC Core section 5.5).
+            $params['claims'] = $this->claimsRequest;
+        }
+        if ($this->useDpop) {
+            // Bind the code to this login's DPoP key from the start (RFC 9449 section 10):
+            // a code stolen on the way back cannot be redeemed without the key. The key
+            // waits in the session for the callback.
+            $dpop = new DPoP();
+            $_SESSION[$this->skey('dpop')] = $dpop->privateKeyPem();
+            $params['dpop_jkt'] = $dpop->thumbprint();
+        }
         // Operator extras (prompt, login_hint, ui_locales...). parseExtra
         // already dropped anything that would overwrite a parameter we depend on.
         $params += $this->extraParams;
+        if ($this->signedRequest) {
+            $params = $this->requestObject($disco, $params);
+        }
 
         if ($this->usePar($disco)) {
             return $disco['authorization_endpoint'] . '?' . http_build_query([
@@ -178,7 +221,48 @@ final class OidcProtocol implements ProtocolInterface
                 'request_uri' => $this->pushAuthorizationRequest($disco, $params),
             ]);
         }
+        if (isset($params['request']) && $this->requestUriBase !== '') {
+            // By reference (RFC 9101 section 5.2): the IdP fetches the object from us, and
+            // the browser URL carries a short link instead of the whole JWT. PAR, above,
+            // does the same job without the IdP calling back, so it wins when both are on.
+            $params['request_uri'] = $this->requestUriBase . '?id=' . RequestObjectStore::put($params['request']);
+            unset($params['request']);
+        }
         return $disco['authorization_endpoint'] . '?' . http_build_query($params);
+    }
+
+    /**
+     * Wrap the authorization request in a signed request object (JAR, RFC 9101).
+     *
+     * Every parameter -- redirect_uri, scope, state, nonce, PKCE challenge, acr_values --
+     * travels inside a JWT signed with the client key, so nothing between the firewall and
+     * the IdP can alter it, and the IdP knows it was this client that asked. PAR already
+     * keeps the request off the browser; JAR proves its origin as well, and the two
+     * combine (the request object is what gets pushed).
+     *
+     * client_id, response_type and scope are repeated in the clear: RFC 9101 needs only
+     * client_id, but OIDC Core 6.1 has the IdP check the other two against the object.
+     *
+     * @param array<string,string> $params
+     * @return array<string,string>
+     */
+    private function requestObject(array $disco, array $params): array
+    {
+        $now = time();
+        $object = $params + [
+            'iss' => $this->clientId,
+            'aud' => (string)$disco['issuer'],
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $now + 300,
+            'jti' => $this->randomToken(16),
+        ];
+        return [
+            'client_id' => $this->clientId,
+            'response_type' => $params['response_type'],
+            'scope' => $params['scope'],
+            'request' => $this->clientAuth->signAsClient($object, ['typ' => 'oauth-authz-req+jwt']),
+        ];
     }
 
     /**
@@ -221,6 +305,31 @@ final class OidcProtocol implements ProtocolInterface
     }
 
     /**
+     * The OIDC "claims" request parameter (OIDC Core section 5.5), as compact JSON, or
+     * null when $json is not one: a JSON object whose only members are "id_token" and
+     * "userinfo", each an object naming claims. Anything else would reach the IdP as a
+     * request it either rejects or, worse, half-understands.
+     */
+    public static function claimsRequest(string $json): ?string
+    {
+        $decoded = json_decode($json, true);
+        if (!is_array($decoded) || $decoded === [] || array_is_list($decoded)) {
+            return null;
+        }
+        foreach ($decoded as $member => $claims) {
+            if (
+                !in_array($member, ['id_token', 'userinfo'], true)
+                || !is_array($claims)
+                || (array_is_list($claims) && $claims !== [])
+            ) {
+                return null;
+            }
+        }
+        $compact = json_encode(json_decode($json), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return $compact === false ? null : $compact;
+    }
+
+    /**
      * Parse the operator's "key=value, key=value" extras.
      *
      * Anything that carries the security of the flow -- the ones minted per login,
@@ -238,6 +347,10 @@ final class OidcProtocol implements ProtocolInterface
             // also verifies the acr that comes back. Requesting one here and not
             // checking it is how you end up believing MFA is enforced when it is not.
             'acr_values',
+            // claims has its own field, which validates the JSON.
+            'claims',
+            // dpop_jkt names the key this login generated; any other would break DPoP.
+            'dpop_jkt',
         ];
         $out = [];
         foreach (preg_split('/[,\r\n]+/', $spec) ?: [] as $pair) {
@@ -257,17 +370,30 @@ final class OidcProtocol implements ProtocolInterface
 
     public function handleCallback(array $request): NormalizedIdentity
     {
+        if ($this->jarm) {
+            // Everything below reads the verified claims, never the raw query.
+            $request = $this->decodeJarm($this->discover(), $request);
+        }
         // Snapshot AND clear all single-use material up front, so a failure midway
         // can never leave reusable state/nonce/verifier behind in the session.
         $sessionState = (string)($_SESSION[$this->skey('state')] ?? '');
         $sessionNonce = (string)($_SESSION[$this->skey('nonce')] ?? '');
         $verifier = (string)($_SESSION[$this->skey('verifier')] ?? '');
-        unset($_SESSION[$this->skey('state')], $_SESSION[$this->skey('nonce')], $_SESSION[$this->skey('verifier')]);
+        $dpopKey = (string)($_SESSION[$this->skey('dpop')] ?? '');
+        unset(
+            $_SESSION[$this->skey('state')],
+            $_SESSION[$this->skey('nonce')],
+            $_SESSION[$this->skey('verifier')],
+            $_SESSION[$this->skey('dpop')]
+        );
 
         // state: anti-CSRF, single use.
         if ($sessionState === '' || !hash_equals($sessionState, (string)($request['state'] ?? ''))) {
             throw new \RuntimeException('OIDC: state mismatch (possible CSRF)');
         }
+        $disco = $this->discover();
+        // Before the error branch: an error response names its issuer too (RFC 9207).
+        $this->assertResponseIssuer($disco, $request);
         if (!empty($request['error'])) {
             throw new \RuntimeException('OIDC: IdP returned error: ' . (string)$request['error']);
         }
@@ -276,7 +402,9 @@ final class OidcProtocol implements ProtocolInterface
             throw new \RuntimeException('OIDC: missing authorization code');
         }
 
-        $disco = $this->discover();
+        // The key this login started with (the code is bound to it); a fresh one only
+        // for a login begun before DPoP was turned on, which an IdP binding codes refuses.
+        $this->dpop = $this->useDpop ? new DPoP($dpopKey) : null;
         $tokens = $this->exchangeCode($disco, $code, $verifier);
         $idToken = (string)($tokens['id_token'] ?? '');
         if ($idToken === '') {
@@ -292,7 +420,11 @@ final class OidcProtocol implements ProtocolInterface
         // Optionally enrich from userinfo (groups/email often live there).
         $merged = (array)$claims;
         if (!empty($tokens['access_token']) && !empty($disco['userinfo_endpoint'])) {
-            $userInfo = $this->fetchUserInfo($disco, (string)$tokens['access_token']);
+            $userInfo = $this->fetchUserInfo(
+                $disco,
+                (string)$tokens['access_token'],
+                (string)($tokens['token_type'] ?? '')
+            );
             if (!empty($userInfo)) {
                 // OIDC Core §5.3.2: the UserInfo `sub` MUST exactly match the ID
                 // token `sub`; otherwise the response MUST NOT be used. Without this
@@ -310,6 +442,95 @@ final class OidcProtocol implements ProtocolInterface
         $merged = $this->resolveGroupOverage($disco, $merged);
 
         return $this->toIdentity($merged);
+    }
+
+    /**
+     * The `state` inside a JARM response, unverified, '' when there is none.
+     *
+     * Only to find the in-flight login it belongs to before the provider -- and so the
+     * keys to verify with -- is known. Nothing is trusted from it: the same value in a
+     * plain response comes straight from an attacker-controllable URL, and decodeJarm()
+     * verifies the JWT before the state is compared with the session.
+     */
+    public static function peekJarmState(string $jwt): string
+    {
+        $parts = explode('.', $jwt);
+        if (count($parts) !== 3) {
+            return '';
+        }
+        $claims = json_decode((string)base64_decode(strtr($parts[1], '-_', '+/')), true);
+        return is_array($claims) && is_string($claims['state'] ?? null) ? $claims['state'] : '';
+    }
+
+    /**
+     * Verify a JARM authorization response and return its claims (code, state, iss...).
+     *
+     * Signed by the IdP with the keys and algorithms it publishes for that purpose; `iss`
+     * must be the discovered issuer, `aud` this client, and `exp` present -- an unexpiring
+     * response could be replayed. With JARM on, a response that is not a signed JWT is
+     * refused rather than read the plain way: that would be a downgrade anyone on the path
+     * could choose. An encrypted (JWE) response is refused too: os-sso holds no key for it.
+     *
+     * @return array<string,mixed>
+     */
+    private function decodeJarm(array $disco, array $request): array
+    {
+        $jwt = (string)($request['response'] ?? '');
+        if ($jwt === '' || substr_count($jwt, '.') !== 2) {
+            throw new \RuntimeException('OIDC: JARM is on, but the authorization response is not a signed JWT');
+        }
+        $this->assertAsymmetricAlg($jwt, 'authorization response');
+        $field = 'authorization_signing_alg_values_supported';
+        try {
+            $claims = JWT::decode($jwt, $this->jwks($disco, false, $jwt, $field));
+        } catch (\UnexpectedValueException $e) {
+            if (stripos($e->getMessage(), 'kid') === false) {
+                throw $e;
+            }
+            $claims = JWT::decode($jwt, $this->jwks($disco, true, $jwt, $field));
+        }
+        if (!isset($claims->iss) || $claims->iss !== $disco['issuer']) {
+            throw new \RuntimeException('OIDC: the signed authorization response comes from another issuer');
+        }
+        if (!in_array($this->clientId, (array)($claims->aud ?? []), true)) {
+            throw new \RuntimeException('OIDC: the signed authorization response is not for this client');
+        }
+        if (!isset($claims->exp)) {
+            throw new \RuntimeException('OIDC: the signed authorization response has no exp');
+        }
+        $out = [];
+        foreach ((array)$claims as $name => $value) {
+            if (is_scalar($value)) {
+                $out[$name] = (string)$value;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The authorization response must come from the IdP we sent the user to (RFC 9207).
+     *
+     * With several providers configured, a mix-up attack swaps one IdP's response for
+     * another's, so that a code minted by a provider the attacker controls is redeemed
+     * at an honest one, or the reverse. The state already ties the response to the
+     * provider this login was started with; the `iss` parameter is the IdP saying so
+     * itself. When it is sent it must be the discovered issuer exactly, and when the IdP
+     * declares it always sends one (authorization_response_iss_parameter_supported), a
+     * response without it is refused -- something stripped it.
+     */
+    private function assertResponseIssuer(array $disco, array $response): void
+    {
+        if (array_key_exists('iss', $response)) {
+            if (!is_string($response['iss']) || $response['iss'] !== $disco['issuer']) {
+                throw new \RuntimeException('OIDC: the authorization response comes from another issuer (RFC 9207)');
+            }
+            return;
+        }
+        if (!empty($disco['authorization_response_iss_parameter_supported'])) {
+            throw new \RuntimeException(
+                'OIDC: the authorization response has no iss, which this IdP always sends (RFC 9207)'
+            );
+        }
     }
 
     /* ---- Entra ID group overage ---------------------------------------- */
@@ -553,6 +774,7 @@ final class OidcProtocol implements ProtocolInterface
     {
         $disco = $this->discover();
         $this->assertAsymmetricAlg($jwt);
+        TokenType::allowOnly($jwt, [TokenType::LOGOUT, TokenType::GENERIC], 'OIDC logout');
         try {
             $claims = JWT::decode($jwt, $this->jwks($disco, false, $jwt));
         } catch (\UnexpectedValueException $e) {
@@ -603,6 +825,56 @@ final class OidcProtocol implements ProtocolInterface
         return ['sub' => $sub, 'sid' => $sid];
     }
 
+    /**
+     * The IdP session a front-channel logout names (OIDC Front-Channel Logout 1.0).
+     *
+     * The IdP renders our frontchannel_logout_uri in an iframe when a session ends on its
+     * side -- the only logout Entra ID offers, which has no back-channel. Nothing signs
+     * that request: per the spec, `iss` and `sid` in the query are the whole of it, and
+     * `sid` (an unguessable IdP session id) is what makes it safe to honour. So `sid` is
+     * required -- our session cookie is SameSite=Lax and never reaches a third-party
+     * iframe, so without it there is nothing to identify -- while `iss`, when sent, must
+     * be the discovered issuer exactly; when absent, the provider in the registered URL
+     * already says which IdP this is.
+     *
+     * @param array<string,mixed> $query the request's query parameters
+     * @return string the `sid` whose sessions are to end
+     */
+    public function frontChannelSid(array $query): string
+    {
+        $disco = $this->discover();
+        $iss = $query['iss'] ?? null;
+        $sid = $query['sid'] ?? null;
+        if ($iss !== null && $iss !== $disco['issuer']) {
+            throw new \RuntimeException('OIDC front-channel logout: issuer mismatch');
+        }
+        if (!is_string($sid) || preg_match('/^[\x21-\x7e]{1,255}$/D', $sid) !== 1) {
+            throw new \RuntimeException(
+                'OIDC front-channel logout: no usable sid (have the IdP send the session id with the request)'
+            );
+        }
+        return $sid;
+    }
+
+    /**
+     * Who may frame the front-channel logout page: the IdP's own origins (its issuer and
+     * authorization endpoint), and nobody else.
+     *
+     * @return string[]
+     */
+    public function frontChannelOrigins(): array
+    {
+        $disco = $this->discover();
+        $origins = [];
+        foreach ([(string)$disco['issuer'], (string)($disco['authorization_endpoint'] ?? '')] as $url) {
+            $origin = \OPNsense\SSO\HtmlPage::originOf($url);
+            if ($origin !== '' && !in_array($origin, $origins, true)) {
+                $origins[] = $origin;
+            }
+        }
+        return $origins;
+    }
+
     /** Accept each logout token's jti once, so a captured one cannot be re-fired. */
     private function guardLogoutReplay(string $jti): void
     {
@@ -647,6 +919,9 @@ final class OidcProtocol implements ProtocolInterface
         // symmetric HS* alg if the issuer's JWKS ever exposed an "oct" key -- so
         // reject HS*/none on the header up front, mirroring the JWT forward-auth path.
         $this->assertAsymmetricAlg($idToken);
+        // A token declaring another kind (a logout token, an access token...) is not an
+        // ID token, whatever its claims look like.
+        TokenType::refuse($idToken, self::NOT_ID_TOKENS, 'OIDC id_token');
         // decode() enforces signature + exp/nbf/iat and rejects alg:none. The key
         // set carries each key's algorithm, so a JWKS public key can never be
         // abused as an HMAC secret (alg-confusion) -- we never pass a string key.
@@ -894,8 +1169,12 @@ final class OidcProtocol implements ProtocolInterface
      * cache (used once on an unknown kid to pick up a key rotation).
      * @return \Firebase\JWT\Key[]
      */
-    private function jwks(array $disco, bool $force, string $jwt = '', string $algorithmField = 'id_token_signing_alg_values_supported'): array
-    {
+    private function jwks(
+        array $disco,
+        bool $force,
+        string $jwt = '',
+        string $algorithmField = 'id_token_signing_alg_values_supported'
+    ): array {
         if (empty($disco['jwks_uri'])) {
             throw new \RuntimeException('OIDC: discovery has no jwks_uri');
         }
@@ -960,7 +1239,7 @@ final class OidcProtocol implements ProtocolInterface
             }
             $body['code_verifier'] = $verifier;
         }
-        return $this->tokenRequest($disco, $body);
+        return $this->tokenRequest($disco, $body, $this->dpop);
     }
 
     /**
@@ -971,14 +1250,14 @@ final class OidcProtocol implements ProtocolInterface
      * having one place for it means a private_key_jwt or mTLS setup works for both
      * without being wired twice.
      */
-    private function tokenRequest(array $disco, array $body): array
+    private function tokenRequest(array $disco, array $body, ?DPoP $dpop = null): array
     {
         $method = $this->clientAuth->method($disco);
         $endpoint = $this->clientAuth->tokenEndpoint($disco, $method);
         if ($endpoint === '') {
             throw new \RuntimeException('OIDC: discovery has no usable token_endpoint');
         }
-        return $this->postToEndpoint($disco, $endpoint, $body);
+        return $this->postToEndpoint($disco, $endpoint, $body, $dpop);
     }
 
     /**
@@ -989,22 +1268,43 @@ final class OidcProtocol implements ProtocolInterface
      * client exactly the same way, so a private_key_jwt or mTLS setup works for both
      * without being wired twice.
      */
-    private function postToEndpoint(array $disco, string $endpoint, array $body): array
+    private function postToEndpoint(array $disco, string $endpoint, array $body, ?DPoP $dpop = null): array
     {
-        $headers = [
-            'Content-Type: application/x-www-form-urlencoded',
-            'Accept: application/json',
-        ];
-        $curlOptions = [];
         $method = $this->clientAuth->method($disco);
-        $this->clientAuth->apply($disco, $method, $body, $headers, $curlOptions);
-
-        $resp = $this->curl($endpoint, http_build_query($body), $headers, $curlOptions);
-        $json = json_decode($resp, true);
-        if (!is_array($json) || isset($json['error'])) {
-            throw new \RuntimeException('OIDC: ' . $endpoint . ' returned: ' . ($json['error'] ?? 'an invalid response'));
+        $nonce = '';
+        // A DPoP server may want a nonce of its own first (RFC 9449 section 8): it says so
+        // with use_dpop_nonce and a DPoP-Nonce header, and the request is made once more.
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            // Rebuilt each time: a client assertion is single-use (its jti), so a retry
+            // carrying the same one would be refused as a replay.
+            $form = $body;
+            $headers = [
+                'Content-Type: application/x-www-form-urlencoded',
+                'Accept: application/json',
+            ];
+            $curlOptions = [];
+            $this->clientAuth->apply($disco, $method, $form, $headers, $curlOptions);
+            if ($dpop !== null) {
+                $headers[] = 'DPoP: ' . $dpop->proof('POST', $endpoint, $nonce);
+            }
+            [$status, $responseHeaders, $resp] =
+                $this->request($endpoint, http_build_query($form), $headers, $curlOptions);
+            $json = json_decode($resp, true);
+            if (
+                $dpop !== null && $attempt === 1 && $nonce === ''
+                && is_array($json) && ($json['error'] ?? '') === 'use_dpop_nonce'
+                && ($responseHeaders['dpop-nonce'] ?? '') !== ''
+            ) {
+                $nonce = $responseHeaders['dpop-nonce'];
+                continue;
+            }
+            if ($status < 200 || $status >= 300 || !is_array($json) || isset($json['error'])) {
+                throw new \RuntimeException('OIDC: ' . $endpoint . ' returned: '
+                    . (is_array($json) && isset($json['error']) ? $json['error'] : 'HTTP ' . $status));
+            }
+            return $json;
         }
-        return $json;
+        throw new \RuntimeException('OIDC: ' . $endpoint . ' kept asking for a new DPoP nonce');
     }
 
     /** The client authentication method in force against this IdP (for diagnostics). */
@@ -1022,13 +1322,10 @@ final class OidcProtocol implements ProtocolInterface
      * with required groups configured that is a refusal nobody can explain. So a
      * response we cannot use says so, and a signed one is simply verified and used.
      */
-    private function fetchUserInfo(array $disco, string $accessToken): array
+    private function fetchUserInfo(array $disco, string $accessToken, string $tokenType = ''): array
     {
         try {
-            $resp = $this->httpGet((string)$disco['userinfo_endpoint'], [
-                'Authorization: Bearer ' . $accessToken,
-                'Accept: application/json, application/jwt',
-            ]);
+            $resp = $this->userInfoRequest((string)$disco['userinfo_endpoint'], $accessToken, $tokenType);
         } catch (\Throwable $e) {
             syslog(LOG_WARNING, 'os-sso oidc: the userinfo request failed: ' . $e->getMessage());
             return [];
@@ -1043,6 +1340,42 @@ final class OidcProtocol implements ProtocolInterface
             syslog(LOG_WARNING, 'os-sso oidc: unusable userinfo response: ' . $e->getMessage());
             return [];
         }
+    }
+
+    /**
+     * The userinfo request, presenting the token the way it was issued.
+     *
+     * A DPoP-bound token (token_type DPoP) goes as `Authorization: DPoP` with a fresh proof
+     * naming this request and the token (ath); a resource server may ask for its own nonce
+     * once, like the token endpoint. Anything else goes as a bearer token -- including when
+     * DPoP was asked for and the IdP issued a plain bearer token anyway.
+     */
+    private function userInfoRequest(string $endpoint, string $accessToken, string $tokenType): string
+    {
+        $accept = 'Accept: application/json, application/jwt';
+        if ($this->dpop === null || strcasecmp($tokenType, 'DPoP') !== 0) {
+            return $this->httpGet($endpoint, ['Authorization: Bearer ' . $accessToken, $accept]);
+        }
+        $nonce = '';
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            [$status, $headers, $body] = $this->request($endpoint, null, [
+                'Authorization: DPoP ' . $accessToken,
+                'DPoP: ' . $this->dpop->proof('GET', $endpoint, $nonce, $accessToken),
+                $accept,
+            ]);
+            if (
+                $status === 401 && $attempt === 1 && ($headers['dpop-nonce'] ?? '') !== ''
+                && stripos($headers['www-authenticate'] ?? '', 'use_dpop_nonce') !== false
+            ) {
+                $nonce = $headers['dpop-nonce'];
+                continue;
+            }
+            if ($status < 200 || $status >= 300) {
+                throw new \RuntimeException('OIDC: HTTP ' . $status . ' from ' . $endpoint);
+            }
+            return $body;
+        }
+        throw new \RuntimeException('OIDC: ' . $endpoint . ' kept asking for a new DPoP nonce');
     }
 
     /**
@@ -1063,6 +1396,7 @@ final class OidcProtocol implements ProtocolInterface
             throw new \RuntimeException('the response is neither JSON nor a signed JWT');
         }
         $this->assertAsymmetricAlg($jwt, 'userinfo response');
+        TokenType::refuse($jwt, self::NOT_ID_TOKENS, 'signed userinfo');
         try {
             $claims = JWT::decode($jwt, $this->jwks($disco, false, $jwt, 'userinfo_signing_alg_values_supported'));
         } catch (\UnexpectedValueException $e) {
@@ -1125,6 +1459,22 @@ final class OidcProtocol implements ProtocolInterface
      */
     private function curl(string $url, ?string $postBody, array $headers, array $extraOptions = []): string
     {
+        [$httpCode, , $resp] = $this->request($url, $postBody, $headers, $extraOptions);
+        if ($httpCode < 200 || $httpCode >= 300) {
+            throw new \RuntimeException('OIDC: HTTP ' . $httpCode . ' from ' . $url);
+        }
+        return $resp;
+    }
+
+    /**
+     * One HTTP request, answered whatever its status: [status, headers, body], header
+     * names lowercased. For the callers that read an error response (a DPoP nonce comes
+     * with a 400 or a 401); everything else goes through curl(), which refuses non-2xx.
+     *
+     * @return array{0:int,1:array<string,string>,2:string}
+     */
+    private function request(string $url, ?string $postBody, array $headers, array $extraOptions = []): array
+    {
         if (stripos($url, 'https://') !== 0) {
             throw new \RuntimeException('OIDC: refusing non-https endpoint ' . $url);
         }
@@ -1150,23 +1500,27 @@ final class OidcProtocol implements ProtocolInterface
         if (!empty($extraOptions)) {
             curl_setopt_array($ch, $extraOptions);
         }
+        $responseHeaders = [];
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, string $line) use (&$responseHeaders): int {
+            $parts = explode(':', $line, 2);
+            if (count($parts) === 2) {
+                $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+            }
+            return strlen($line);
+        });
         $resp = curl_exec($ch);
         $err = curl_error($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
         if ($resp === false) {
             throw new \RuntimeException('OIDC: HTTP request failed: ' . $err);
         }
-        if ($httpCode < 200 || $httpCode >= 300) {
-            throw new \RuntimeException('OIDC: HTTP ' . $httpCode . ' from ' . $url);
-        }
-        return (string)$resp;
+        return [$httpCode, $responseHeaders, (string)$resp];
     }
 
     private function randomToken(int $bytes = 32): string
     {
         return rtrim(strtr(base64_encode(random_bytes($bytes)), '+/', '-_'), '=');
     }
-
 }
