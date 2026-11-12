@@ -20,6 +20,6 @@ expected = {(index, line.split("// expect: ", 1)[1].strip())
             for index, line in enumerate((root / "test/security/canaries/unsafe.php").read_text().splitlines(), 1)
             if "// expect: " in line}
 found = {(issue["line_from"], issue["type"]) for issue in issues if Path(issue["file_name"]).name == "unsafe.php"}
-if len(expected) != 5 or not expected.issubset(found) or any(Path(issue["file_name"]).name == "safe.php" for issue in issues):
+if len(expected) != 6 or not expected.issubset(found) or any(Path(issue["file_name"]).name == "safe.php" for issue in issues):
     raise SystemExit(f"Incorrect taint model: {[(issue['type'], issue['file_name'], issue['line_from']) for issue in issues]}")
-print("Psalm canaries detected all five unsafe framework flows and accepted scoped escaping/structured backend arguments.")
+print("Psalm canaries detected all six unsafe framework flows and accepted scoped escaping/structured backend arguments.")

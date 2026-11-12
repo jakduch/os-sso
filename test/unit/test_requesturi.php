@@ -22,6 +22,16 @@ eq('header.payload.signature', RequestObjectStore::get($id), 'and still on a sec
 eq(null, RequestObjectStore::get($id, time() + RequestObjectStore::TTL + 1), 'but not once expired');
 eq(null, RequestObjectStore::get('../../etc/passwd'), 'an id that is not one is refused');
 eq(null, RequestObjectStore::get(str_repeat('A', 43)), 'an unknown id finds nothing');
+$requestDirectory = OPNsense\SSO\StateDir::path('request');
+$newlineFile = $requestDirectory . '/' . $id . "\n.json";
+file_put_contents($newlineFile, json_encode(['exp' => time() + 60, 'jwt' => 'must not be read']));
+try {
+    foreach ([$id . "\n", $id . "\0", '../' . $id, $id . '/..', 'php://filter', str_repeat('A', 42), str_repeat('A', 44)] as $invalidId) {
+        eq(null, RequestObjectStore::get($invalidId), 'only a complete fixed-length identifier is read: ' . json_encode($invalidId));
+    }
+} finally {
+    unlink($newlineFile);
+}
 $old = RequestObjectStore::put('old', time() - RequestObjectStore::TTL - 5);
 RequestObjectStore::put('new');
 truthy(!is_file(OPNsense\SSO\StateDir::path('request') . "/$old.json"), 'expired objects are swept on the next put');

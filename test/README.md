@@ -52,7 +52,9 @@ The same workflow also runs these account-free CLI tools:
   response headers/content as sinks, and configd action names as command sinks. Structured
   backend arguments are quoted by core; they are not modelled as raw shell commands.
   The reviewed `ReturnUrl::sanitize()` contract removes only header taint. It does not make
-  a value safe for HTML. Five deliberately unsafe flows and three safe controls verify
+  a value safe for HTML. Request-object IDs are validated as exactly 43 URL-safe characters
+  before forming a private-store path; only that validated path clears file-path taint.
+  Six deliberately unsafe flows and four safe controls verify
   those assumptions before every scan. No taint baseline suppresses production findings.
 - **Gitleaks CLI** scans all fetched Git history, with fully redacted SARIF reports.
   `.gitleaks.toml` keeps default rules and narrowly exempts only a public verification-key

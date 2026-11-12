@@ -7,6 +7,7 @@ namespace OPNsense\SSO\SecurityCanary;
 use OPNsense\Base\ApiControllerBase;
 use OPNsense\Core\Backend;
 use OPNsense\SSO\ReturnUrl;
+use OPNsense\SSO\RequestObjectStore;
 
 final class SafeController extends ApiControllerBase
 {
@@ -26,5 +27,11 @@ final class SafeController extends ApiControllerBase
 	{
 		// configdpRun quotes structured parameters; the action name is literal.
 		(new Backend())->configdpRun('sso vpn_kill', [(string)$this->request->get('username')]);
+	}
+
+
+	public function requestObject(): ?string
+	{
+		return RequestObjectStore::get((string)$this->request->get('id'));
 	}
 }
